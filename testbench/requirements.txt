@@ -1,0 +1,4 @@
+gpiozero
+adafruit-circuitpython-ads1x15
+PySide6
+pyqtgraph

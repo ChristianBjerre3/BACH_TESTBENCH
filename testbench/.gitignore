@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Generated experiment / CSV test data
+data/*.csv
+data/**/*.csv
+!data/.gitkeep
+
+# Sequence working copies if generated at runtime (keep folder)
+# sequences/*.json  # uncomment if sequences become generated artefacts
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Testing / coverage / mypy
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Environment / local secrets
+.env
+.env.*
