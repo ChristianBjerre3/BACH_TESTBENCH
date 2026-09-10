@@ -1,0 +1,14 @@
+{
+    "test_name": "",
+    "mount_name": "",
+    "comment": "",
+    "date_time": "2026-09-10T13:29:26.460737",
+    "app_name": "Airflow Smoke Test Bench",
+    "app_version": "0.1.0",
+    "sample_rate_hz": 10,
+    "sample_interval_s": 0.1,
+    "csv_file": "20260910_132926.csv",
+    "events_file": "20260910_132926_events.csv",
+    "recording_active": false,
+    "recording_duration_s": 3.251956899999641
+}

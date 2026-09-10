@@ -1,50 +1,79 @@
 """
 gui/control_tab.py
 
-Manual control tab for the airflow/smoke test bench.
+Redesigned manual CONTROL interface for the Airflow Smoke Test Bench.
 
-CONTROL is intentionally a manual workflow.
+The visual design follows the approved dark dashboard concept while
+preserving the existing application functionality.
 
-The operator can:
-    - Enter metadata for a manual test
-    - Manually control both fans
-    - Manually enable/disable both optical sensors
-    - Manually log the smoke-machine state
+CONTROL remains the manual workflow.
+
+Available functionality:
+    - Test name
+    - Mount
+    - Comment
+    - Main fan ON/OFF
+    - Main fan PWM
+    - Smoke fan ON/OFF
+    - Smoke fan PWM
+    - Sensor 1 ON/OFF
+    - Sensor 2 ON/OFF
+    - Sensor 1 live voltage display
+    - Sensor 2 live voltage display
+    - Manual smoke-machine ON/OFF logging
     - Start/stop manual recording
-    - Use STOP ALL
+    - STOP ALL
 
-When an automatic sequence is running, conflicting manual controls
-are locked. Smoke-machine logging and STOP ALL remain available.
+When a sequence is running:
+    - Manual fan controls are locked
+    - Sensor controls are locked
+    - Metadata is locked
+    - Manual recording controls are locked
 
-This module only defines GUI behavior and emits Qt signals.
+Still available during a sequence:
+    - Smoke-machine manual log toggle
+    - STOP ALL
+
+This module contains GUI behavior only.
 It does not directly access hardware.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from typing import Optional
+
+from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QGridLayout,
-    QGroupBox,
+    QFrame,
     QLabel,
     QLineEdit,
     QTextEdit,
     QPushButton,
     QComboBox,
+    QSizePolicy,
 )
 
 import config
+
+from gui.styles import (
+    set_card,
+    set_role,
+    set_label_role,
+    CARD_SPACING,
+    PAGE_MARGIN,
+)
 
 
 class ControlTab(QWidget):
     """Manual test/control interface."""
 
-    # ================================================================
+    # =================================================================
     # SIGNALS
-    # ================================================================
+    # =================================================================
 
     main_fan_active_changed = Signal(bool)
     main_fan_pwm_changed = Signal(int)
@@ -62,9 +91,9 @@ class ControlTab(QWidget):
 
     stop_all_requested = Signal()
 
-    # ================================================================
+    # =================================================================
     # INITIALIZATION
-    # ================================================================
+    # =================================================================
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -72,45 +101,76 @@ class ControlTab(QWidget):
         self._sequence_running = False
         self._recording = False
 
+        self._sensor_1_voltage: Optional[float] = None
+        self._sensor_2_voltage: Optional[float] = None
+
         self._build_ui()
         self._connect_internal_signals()
         self._set_initial_state()
 
-    # ================================================================
+    # =================================================================
     # BUILD UI
-    # ================================================================
+    # =================================================================
 
     def _build_ui(self) -> None:
-        """Create compact manual-control layout."""
+        """
+        Build the redesigned CONTROL interface.
+
+        Layout concept:
+
+        ┌──────────────────────┬──────────────────────┐
+        │ TEST INFORMATION     │ MAIN FAN             │
+        ├──────────────────────┼──────────────────────┤
+        │ SENSOR 1             │ SMOKE FAN            │
+        ├──────────────────────┼──────────────────────┤
+        │ SENSOR 2             │ SMOKE MACHINE        │
+        ├──────────────────────┴──────────────────────┤
+        │ RECORDING                                   │
+        ├─────────────────────────────────────────────┤
+        │ STOP ALL                                    │
+        └─────────────────────────────────────────────┘
+
+        The final main_window redesign will place STOP ALL together
+        with the right-side live panel.
+        """
 
         main_layout = QVBoxLayout(self)
 
         main_layout.setContentsMargins(
-            8,
-            8,
-            8,
-            8,
+            PAGE_MARGIN,
+            PAGE_MARGIN,
+            PAGE_MARGIN,
+            PAGE_MARGIN,
         )
 
-        main_layout.setSpacing(6)
-
-        main_layout.addWidget(
-            self._create_metadata_group()
+        main_layout.setSpacing(
+            CARD_SPACING
         )
 
-        # ------------------------------------------------------------
-        # Sequence lock information
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # Sequence lock banner
+        # -------------------------------------------------------------
 
         self.sequence_lock_label = QLabel(
-            "Sequence currently running - manual controls locked."
+            "Automatic sequence running — manual controls are locked"
+        )
+
+        self.sequence_lock_label.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+
+        self.sequence_lock_label.setProperty(
+            "role",
+            "statusRecording",
         )
 
         self.sequence_lock_label.setStyleSheet(
             """
             QLabel {
-                font-weight: bold;
-                padding: 5px;
+                background-color: #351824;
+                border: 1px solid #7A2638;
+                border-radius: 7px;
+                padding: 8px;
             }
             """
         )
@@ -123,281 +183,382 @@ class ControlTab(QWidget):
             self.sequence_lock_label
         )
 
-        # ------------------------------------------------------------
-        # Manual controls
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # Main two-column dashboard
+        # -------------------------------------------------------------
 
-        main_layout.addWidget(
-            self._create_fans_group()
+        dashboard_layout = QGridLayout()
+
+        dashboard_layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
+
+        dashboard_layout.setHorizontalSpacing(
+            CARD_SPACING
+        )
+
+        dashboard_layout.setVerticalSpacing(
+            CARD_SPACING
+        )
+
+        self.metadata_card = (
+            self._create_metadata_card()
+        )
+
+        self.sensor_1_card = (
+            self._create_sensor_1_card()
+        )
+
+        self.sensor_2_card = (
+            self._create_sensor_2_card()
+        )
+
+        self.main_fan_card = (
+            self._create_main_fan_card()
+        )
+
+        self.smoke_fan_card = (
+            self._create_smoke_fan_card()
+        )
+
+        self.smoke_machine_card = (
+            self._create_smoke_machine_card()
+        )
+
+        # Left column
+        dashboard_layout.addWidget(
+            self.metadata_card,
+            0,
+            0,
+        )
+
+        dashboard_layout.addWidget(
+            self.sensor_1_card,
+            1,
+            0,
+        )
+
+        dashboard_layout.addWidget(
+            self.sensor_2_card,
+            2,
+            0,
+        )
+
+        # Right column
+        dashboard_layout.addWidget(
+            self.main_fan_card,
+            0,
+            1,
+        )
+
+        dashboard_layout.addWidget(
+            self.smoke_fan_card,
+            1,
+            1,
+        )
+
+        dashboard_layout.addWidget(
+            self.smoke_machine_card,
+            2,
+            1,
+        )
+
+        dashboard_layout.setColumnStretch(
+            0,
+            1,
+        )
+
+        dashboard_layout.setColumnStretch(
+            1,
+            1,
+        )
+
+        dashboard_layout.setRowStretch(
+            0,
+            2,
+        )
+
+        dashboard_layout.setRowStretch(
+            1,
+            1,
+        )
+
+        dashboard_layout.setRowStretch(
+            2,
+            1,
+        )
+
+        main_layout.addLayout(
+            dashboard_layout,
+            stretch=1,
+        )
+
+        # -------------------------------------------------------------
+        # Recording
+        # -------------------------------------------------------------
+
+        self.recording_card = (
+            self._create_recording_card()
         )
 
         main_layout.addWidget(
-            self._create_sensors_group()
+            self.recording_card
         )
 
-        main_layout.addWidget(
-            self._create_smoke_machine_group()
-        )
-
-        main_layout.addWidget(
-            self._create_recording_group()
-        )
-
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # STOP ALL
-        # ------------------------------------------------------------
+        #
+        # Kept visible until MainWindow is redesigned.
+        # -------------------------------------------------------------
 
-        main_layout.addWidget(
+        self.stop_all_button = (
             self._create_stop_all_button()
         )
 
-        main_layout.addStretch(1)
-
-    # ================================================================
-    # METADATA
-    # ================================================================
-
-    def _create_metadata_group(
-        self,
-    ) -> QGroupBox:
-        """Create compact manual-test metadata section."""
-
-        self.metadata_group = QGroupBox(
-            "Manual test information"
+        main_layout.addWidget(
+            self.stop_all_button
         )
 
-        layout = QGridLayout(
-            self.metadata_group
+    # =================================================================
+    # CARD HELPERS
+    # =================================================================
+
+    @staticmethod
+    def _new_card() -> QFrame:
+        """Create standard dashboard card."""
+
+        card = QFrame()
+
+        card.setFrameShape(
+            QFrame.Shape.NoFrame
+        )
+
+        set_card(
+            card
+        )
+
+        return card
+
+    @staticmethod
+    def _create_card_title(
+        text: str,
+    ) -> QLabel:
+        """Create standard card-title label."""
+
+        label = QLabel(
+            text.upper()
+        )
+
+        set_label_role(
+            label,
+            "cardTitle",
+        )
+
+        return label
+
+    @staticmethod
+    def _create_state_text(
+        active: bool = False,
+    ) -> QLabel:
+        """Create small ON/OFF state label."""
+
+        label = QLabel(
+            "ON" if active else "OFF"
+        )
+
+        label.setAlignment(
+            Qt.AlignmentFlag.AlignRight
+            | Qt.AlignmentFlag.AlignVCenter
+        )
+
+        set_label_role(
+            label,
+            "statusOn"
+            if active
+            else "statusOff",
+        )
+
+        return label
+
+    # =================================================================
+    # METADATA CARD
+    # =================================================================
+
+    def _create_metadata_card(
+        self,
+    ) -> QFrame:
+        """Create Test Information card."""
+
+        card = self._new_card()
+
+        layout = QVBoxLayout(
+            card
         )
 
         layout.setContentsMargins(
-            6,
-            6,
-            6,
-            6,
+            16,
+            14,
+            16,
+            16,
         )
 
-        layout.setHorizontalSpacing(8)
-        layout.setVerticalSpacing(4)
+        layout.setSpacing(
+            8
+        )
+
+        layout.addWidget(
+            self._create_card_title(
+                "Test Information"
+            )
+        )
+
+        # -------------------------------------------------------------
+        # Test name
+        # -------------------------------------------------------------
+
+        test_label = QLabel(
+            "Test name"
+        )
+
+        set_label_role(
+            test_label,
+            "fieldLabel",
+        )
 
         self.test_name_input = QLineEdit()
-        self.mount_name_input = QLineEdit()
-        self.comment_input = QTextEdit()
 
         self.test_name_input.setPlaceholderText(
-            "Example: Manual Test 01"
+            "Example: Test 01"
         )
+
+        layout.addWidget(
+            test_label
+        )
+
+        layout.addWidget(
+            self.test_name_input
+        )
+
+        # -------------------------------------------------------------
+        # Mount
+        # -------------------------------------------------------------
+
+        mount_label = QLabel(
+            "Mount"
+        )
+
+        set_label_role(
+            mount_label,
+            "fieldLabel",
+        )
+
+        self.mount_name_input = QLineEdit()
 
         self.mount_name_input.setPlaceholderText(
             "Example: Mount A"
         )
 
+        layout.addWidget(
+            mount_label
+        )
+
+        layout.addWidget(
+            self.mount_name_input
+        )
+
+        # -------------------------------------------------------------
+        # Comment
+        # -------------------------------------------------------------
+
+        comment_label = QLabel(
+            "Comment"
+        )
+
+        set_label_role(
+            comment_label,
+            "fieldLabel",
+        )
+
+        self.comment_input = QTextEdit()
+
         self.comment_input.setPlaceholderText(
             "Optional comment"
         )
 
-        self.comment_input.setFixedHeight(
-            40
+        self.comment_input.setMaximumHeight(
+            72
         )
 
         layout.addWidget(
-            QLabel("Test name:"),
-            0,
-            0,
+            comment_label
         )
 
         layout.addWidget(
-            self.test_name_input,
-            0,
-            1,
+            self.comment_input
         )
 
-        layout.addWidget(
-            QLabel("Mount:"),
-            1,
-            0,
-        )
+        return card
 
-        layout.addWidget(
-            self.mount_name_input,
-            1,
-            1,
-        )
+    # =================================================================
+    # SENSOR 1 CARD
+    # =================================================================
 
-        layout.addWidget(
-            QLabel("Comment:"),
-            2,
-            0,
-        )
-
-        layout.addWidget(
-            self.comment_input,
-            2,
-            1,
-        )
-
-        return self.metadata_group
-
-    # ================================================================
-    # FANS
-    # ================================================================
-
-    def _create_fans_group(
+    def _create_sensor_1_card(
         self,
-    ) -> QGroupBox:
-        """Create compact manual fan controls."""
+    ) -> QFrame:
+        """Create Sensor 1 card."""
 
-        self.fans_group = QGroupBox(
-            "Manual fan control"
-        )
+        card = self._new_card()
 
-        layout = QGridLayout(
-            self.fans_group
+        layout = QVBoxLayout(
+            card
         )
 
         layout.setContentsMargins(
-            6,
-            6,
-            6,
-            6,
+            16,
+            14,
+            16,
+            14,
         )
 
-        layout.setHorizontalSpacing(8)
-        layout.setVerticalSpacing(4)
-
-        # ------------------------------------------------------------
-        # Main fan
-        # ------------------------------------------------------------
-
-        self.main_fan_button = QPushButton(
-            "OFF"
+        layout.setSpacing(
+            7
         )
 
-        self.main_fan_button.setCheckable(
-            True
+        # -------------------------------------------------------------
+        # Header
+        # -------------------------------------------------------------
+
+        header = QHBoxLayout()
+
+        header.addWidget(
+            self._create_card_title(
+                "Sensor 1"
+            )
         )
 
-        self.main_fan_button.setFixedWidth(
-            64
+        header.addStretch()
+
+        self.sensor_1_state_label = (
+            self._create_state_text()
         )
 
-        self.main_fan_pwm_combo = (
-            self._create_pwm_combo()
+        header.addWidget(
+            self.sensor_1_state_label
         )
 
-        self.main_fan_pwm_combo.setFixedWidth(
-            90
+        layout.addLayout(
+            header
         )
 
-        # ------------------------------------------------------------
-        # Smoke fan
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # Main row
+        # -------------------------------------------------------------
 
-        self.smoke_fan_button = QPushButton(
-            "OFF"
-        )
-
-        self.smoke_fan_button.setCheckable(
-            True
-        )
-
-        self.smoke_fan_button.setFixedWidth(
-            64
-        )
-
-        self.smoke_fan_pwm_combo = (
-            self._create_pwm_combo()
-        )
-
-        self.smoke_fan_pwm_combo.setFixedWidth(
-            90
-        )
-
-        # ------------------------------------------------------------
-        # Layout
-        # ------------------------------------------------------------
-
-        layout.addWidget(
-            QLabel("Main fan"),
-            0,
-            0,
-        )
-
-        layout.addWidget(
-            self.main_fan_button,
-            0,
-            1,
-        )
-
-        layout.addWidget(
-            QLabel("PWM"),
-            0,
-            2,
-        )
-
-        layout.addWidget(
-            self.main_fan_pwm_combo,
-            0,
-            3,
-        )
-
-        layout.addWidget(
-            QLabel("Smoke fan"),
-            1,
-            0,
-        )
-
-        layout.addWidget(
-            self.smoke_fan_button,
-            1,
-            1,
-        )
-
-        layout.addWidget(
-            QLabel("PWM"),
-            1,
-            2,
-        )
-
-        layout.addWidget(
-            self.smoke_fan_pwm_combo,
-            1,
-            3,
-        )
-
-        layout.setColumnStretch(
-            4,
-            1,
-        )
-
-        return self.fans_group
-
-    # ================================================================
-    # SENSORS
-    # ================================================================
-
-    def _create_sensors_group(
-        self,
-    ) -> QGroupBox:
-        """Create manual optical-sensor controls."""
-
-        self.sensors_group = QGroupBox(
-            "Optical sensors"
-        )
-
-        layout = QGridLayout(
-            self.sensors_group
-        )
-
-        layout.setContentsMargins(
-            6,
-            6,
-            6,
-            6,
-        )
-
-        layout.setHorizontalSpacing(8)
-        layout.setVerticalSpacing(4)
+        row = QHBoxLayout()
 
         self.sensor_1_button = QPushButton(
             "OFF"
@@ -407,9 +568,103 @@ class ControlTab(QWidget):
             True
         )
 
-        self.sensor_1_button.setFixedWidth(
-            64
+        set_role(
+            self.sensor_1_button,
+            "toggle",
         )
+
+        self.sensor_1_voltage_label = QLabel(
+            "-- V"
+        )
+
+        set_label_role(
+            self.sensor_1_voltage_label,
+            "liveValueSensor1",
+        )
+
+        self.sensor_1_voltage_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight
+            | Qt.AlignmentFlag.AlignVCenter
+        )
+
+        row.addWidget(
+            self.sensor_1_button
+        )
+
+        row.addStretch()
+
+        row.addWidget(
+            self.sensor_1_voltage_label
+        )
+
+        layout.addLayout(
+            row
+        )
+
+        info = QLabel(
+            "Optical sensor"
+        )
+
+        set_label_role(
+            info,
+            "muted",
+        )
+
+        layout.addWidget(
+            info
+        )
+
+        return card
+
+    # =================================================================
+    # SENSOR 2 CARD
+    # =================================================================
+
+    def _create_sensor_2_card(
+        self,
+    ) -> QFrame:
+        """Create Sensor 2 card."""
+
+        card = self._new_card()
+
+        layout = QVBoxLayout(
+            card
+        )
+
+        layout.setContentsMargins(
+            16,
+            14,
+            16,
+            14,
+        )
+
+        layout.setSpacing(
+            7
+        )
+
+        header = QHBoxLayout()
+
+        header.addWidget(
+            self._create_card_title(
+                "Sensor 2"
+            )
+        )
+
+        header.addStretch()
+
+        self.sensor_2_state_label = (
+            self._create_state_text()
+        )
+
+        header.addWidget(
+            self.sensor_2_state_label
+        )
+
+        layout.addLayout(
+            header
+        )
+
+        row = QHBoxLayout()
 
         self.sensor_2_button = QPushButton(
             "OFF"
@@ -419,67 +674,371 @@ class ControlTab(QWidget):
             True
         )
 
-        self.sensor_2_button.setFixedWidth(
-            64
-        )
-
-        layout.addWidget(
-            QLabel("Sensor 1"),
-            0,
-            0,
-        )
-
-        layout.addWidget(
-            self.sensor_1_button,
-            0,
-            1,
-        )
-
-        layout.addWidget(
-            QLabel("Sensor 2"),
-            1,
-            0,
-        )
-
-        layout.addWidget(
+        set_role(
             self.sensor_2_button,
-            1,
-            1,
+            "toggle",
         )
 
-        layout.setColumnStretch(
-            2,
-            1,
+        self.sensor_2_voltage_label = QLabel(
+            "-- V"
         )
 
-        return self.sensors_group
+        set_label_role(
+            self.sensor_2_voltage_label,
+            "liveValueSensor2",
+        )
 
-    # ================================================================
-    # SMOKE MACHINE
-    # ================================================================
+        self.sensor_2_voltage_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight
+            | Qt.AlignmentFlag.AlignVCenter
+        )
 
-    def _create_smoke_machine_group(
+        row.addWidget(
+            self.sensor_2_button
+        )
+
+        row.addStretch()
+
+        row.addWidget(
+            self.sensor_2_voltage_label
+        )
+
+        layout.addLayout(
+            row
+        )
+
+        info = QLabel(
+            "Optical sensor"
+        )
+
+        set_label_role(
+            info,
+            "muted",
+        )
+
+        layout.addWidget(
+            info
+        )
+
+        return card
+
+    # =================================================================
+    # MAIN FAN CARD
+    # =================================================================
+
+    def _create_main_fan_card(
         self,
-    ) -> QGroupBox:
-        """
-        Create manual smoke-machine logging control.
+    ) -> QFrame:
+        """Create Main Fan card."""
 
-        This does not control physical hardware.
-        """
+        card = self._new_card()
 
-        self.smoke_machine_group = QGroupBox(
-            "Smoke machine"
-        )
-
-        layout = QHBoxLayout(
-            self.smoke_machine_group
+        layout = QVBoxLayout(
+            card
         )
 
         layout.setContentsMargins(
-            6,
-            6,
-            6,
-            6,
+            16,
+            14,
+            16,
+            14,
+        )
+
+        layout.setSpacing(
+            10
+        )
+
+        # -------------------------------------------------------------
+        # Header
+        # -------------------------------------------------------------
+
+        header = QHBoxLayout()
+
+        header.addWidget(
+            self._create_card_title(
+                "Main Fan"
+            )
+        )
+
+        header.addStretch()
+
+        self.main_fan_state_label = (
+            self._create_state_text()
+        )
+
+        header.addWidget(
+            self.main_fan_state_label
+        )
+
+        layout.addLayout(
+            header
+        )
+
+        # -------------------------------------------------------------
+        # ON/OFF
+        # -------------------------------------------------------------
+
+        control_row = QHBoxLayout()
+
+        state_label = QLabel(
+            "Power"
+        )
+
+        set_label_role(
+            state_label,
+            "fieldLabel",
+        )
+
+        self.main_fan_button = QPushButton(
+            "OFF"
+        )
+
+        self.main_fan_button.setCheckable(
+            True
+        )
+
+        set_role(
+            self.main_fan_button,
+            "toggle",
+        )
+
+        control_row.addWidget(
+            state_label
+        )
+
+        control_row.addStretch()
+
+        control_row.addWidget(
+            self.main_fan_button
+        )
+
+        layout.addLayout(
+            control_row
+        )
+
+        # -------------------------------------------------------------
+        # PWM
+        # -------------------------------------------------------------
+
+        pwm_row = QHBoxLayout()
+
+        pwm_label = QLabel(
+            "PWM"
+        )
+
+        set_label_role(
+            pwm_label,
+            "fieldLabel",
+        )
+
+        self.main_fan_pwm_combo = (
+            self._create_pwm_combo()
+        )
+
+        self.main_fan_pwm_combo.setMinimumWidth(
+            110
+        )
+
+        pwm_row.addWidget(
+            pwm_label
+        )
+
+        pwm_row.addStretch()
+
+        pwm_row.addWidget(
+            self.main_fan_pwm_combo
+        )
+
+        layout.addLayout(
+            pwm_row
+        )
+
+        return card
+
+    # =================================================================
+    # SMOKE FAN CARD
+    # =================================================================
+
+    def _create_smoke_fan_card(
+        self,
+    ) -> QFrame:
+        """Create Smoke Fan card."""
+
+        card = self._new_card()
+
+        layout = QVBoxLayout(
+            card
+        )
+
+        layout.setContentsMargins(
+            16,
+            14,
+            16,
+            14,
+        )
+
+        layout.setSpacing(
+            10
+        )
+
+        header = QHBoxLayout()
+
+        header.addWidget(
+            self._create_card_title(
+                "Smoke Fan"
+            )
+        )
+
+        header.addStretch()
+
+        self.smoke_fan_state_label = (
+            self._create_state_text()
+        )
+
+        header.addWidget(
+            self.smoke_fan_state_label
+        )
+
+        layout.addLayout(
+            header
+        )
+
+        control_row = QHBoxLayout()
+
+        state_label = QLabel(
+            "Power"
+        )
+
+        set_label_role(
+            state_label,
+            "fieldLabel",
+        )
+
+        self.smoke_fan_button = QPushButton(
+            "OFF"
+        )
+
+        self.smoke_fan_button.setCheckable(
+            True
+        )
+
+        set_role(
+            self.smoke_fan_button,
+            "toggle",
+        )
+
+        control_row.addWidget(
+            state_label
+        )
+
+        control_row.addStretch()
+
+        control_row.addWidget(
+            self.smoke_fan_button
+        )
+
+        layout.addLayout(
+            control_row
+        )
+
+        pwm_row = QHBoxLayout()
+
+        pwm_label = QLabel(
+            "PWM"
+        )
+
+        set_label_role(
+            pwm_label,
+            "fieldLabel",
+        )
+
+        self.smoke_fan_pwm_combo = (
+            self._create_pwm_combo()
+        )
+
+        self.smoke_fan_pwm_combo.setMinimumWidth(
+            110
+        )
+
+        pwm_row.addWidget(
+            pwm_label
+        )
+
+        pwm_row.addStretch()
+
+        pwm_row.addWidget(
+            self.smoke_fan_pwm_combo
+        )
+
+        layout.addLayout(
+            pwm_row
+        )
+
+        return card
+
+    # =================================================================
+    # SMOKE MACHINE CARD
+    # =================================================================
+
+    def _create_smoke_machine_card(
+        self,
+    ) -> QFrame:
+        """
+        Create Smoke Machine card.
+
+        IMPORTANT:
+        This is manual logging only.
+        The Raspberry Pi does not physically control the smoke machine.
+        """
+
+        card = self._new_card()
+
+        layout = QVBoxLayout(
+            card
+        )
+
+        layout.setContentsMargins(
+            16,
+            14,
+            16,
+            14,
+        )
+
+        layout.setSpacing(
+            9
+        )
+
+        header = QHBoxLayout()
+
+        header.addWidget(
+            self._create_card_title(
+                "Smoke Machine"
+            )
+        )
+
+        header.addStretch()
+
+        self.smoke_machine_state_label = (
+            self._create_state_text()
+        )
+
+        header.addWidget(
+            self.smoke_machine_state_label
+        )
+
+        layout.addLayout(
+            header
+        )
+
+        row = QHBoxLayout()
+
+        description = QLabel(
+            "Manual log state"
+        )
+
+        set_label_role(
+            description,
+            "fieldLabel",
         )
 
         self.smoke_machine_button = QPushButton(
@@ -490,64 +1049,131 @@ class ControlTab(QWidget):
             True
         )
 
-        self.smoke_machine_button.setFixedWidth(
-            64
+        set_role(
+            self.smoke_machine_button,
+            "toggle",
         )
 
-        info_label = QLabel(
-            "Manual logging only"
+        row.addWidget(
+            description
         )
 
-        layout.addWidget(
-            QLabel("Smoke machine")
-        )
+        row.addStretch()
 
-        layout.addWidget(
+        row.addWidget(
             self.smoke_machine_button
         )
 
+        layout.addLayout(
+            row
+        )
+
+        note = QLabel(
+            "Does not control smoke-machine hardware"
+        )
+
+        set_label_role(
+            note,
+            "muted",
+        )
+
         layout.addWidget(
-            info_label
+            note
         )
 
-        layout.addStretch(1)
+        return card
 
-        return self.smoke_machine_group
+    # =================================================================
+    # RECORDING CARD
+    # =================================================================
 
-    # ================================================================
-    # RECORDING
-    # ================================================================
-
-    def _create_recording_group(
+    def _create_recording_card(
         self,
-    ) -> QGroupBox:
-        """Create manual recording controls."""
+    ) -> QFrame:
+        """Create manual Recording card."""
 
-        self.recording_group = QGroupBox(
-            "Manual recording"
-        )
+        card = self._new_card()
 
         layout = QHBoxLayout(
-            self.recording_group
+            card
         )
 
         layout.setContentsMargins(
-            6,
-            6,
-            6,
-            6,
+            16,
+            13,
+            16,
+            13,
         )
+
+        layout.setSpacing(
+            12
+        )
+
+        # -------------------------------------------------------------
+        # Title / status
+        # -------------------------------------------------------------
+
+        text_layout = QVBoxLayout()
+
+        text_layout.setSpacing(
+            3
+        )
+
+        title = self._create_card_title(
+            "Recording"
+        )
+
+        self.recording_status_label = QLabel(
+            "Not recording"
+        )
+
+        set_label_role(
+            self.recording_status_label,
+            "statusOff",
+        )
+
+        text_layout.addWidget(
+            title
+        )
+
+        text_layout.addWidget(
+            self.recording_status_label
+        )
+
+        layout.addLayout(
+            text_layout
+        )
+
+        layout.addStretch()
+
+        # -------------------------------------------------------------
+        # Recording buttons
+        # -------------------------------------------------------------
 
         self.start_recording_button = QPushButton(
             "Start Recording"
+        )
+
+        set_role(
+            self.start_recording_button,
+            "record",
         )
 
         self.stop_recording_button = QPushButton(
             "Stop Recording"
         )
 
-        self.recording_status_label = QLabel(
-            "Not recording"
+        set_role(
+            self.stop_recording_button,
+            "stopSequence",
+        )
+
+        self.start_recording_button.setMinimumWidth(
+            130
+        )
+
+        self.stop_recording_button.setMinimumWidth(
+            130
         )
 
         layout.addWidget(
@@ -558,75 +1184,45 @@ class ControlTab(QWidget):
             self.stop_recording_button
         )
 
-        layout.addWidget(
-            QLabel("Status:")
-        )
+        return card
 
-        layout.addWidget(
-            self.recording_status_label
-        )
-
-        layout.addStretch(1)
-
-        return self.recording_group
-
-    # ================================================================
+    # =================================================================
     # STOP ALL
-    # ================================================================
+    # =================================================================
 
     def _create_stop_all_button(
         self,
     ) -> QPushButton:
-        """Create compact emergency-style STOP ALL control."""
+        """Create STOP ALL safety control."""
 
-        self.stop_all_button = QPushButton(
+        button = QPushButton(
             "STOP ALL"
         )
 
-        self.stop_all_button.setMinimumHeight(
-            48
+        set_role(
+            button,
+            "stopAll",
         )
 
-        self.stop_all_button.setMaximumHeight(
-            55
-        )
-
-        self.stop_all_button.setToolTip(
+        button.setToolTip(
             "Stops both fans and any running sequence. "
             "Manual recording continues. "
             "Sequence-owned recording is stopped."
         )
 
-        self.stop_all_button.setStyleSheet(
-            """
-            QPushButton {
-                font-size: 16px;
-                font-weight: bold;
-                background-color: #b00020;
-                color: white;
-                border-radius: 4px;
-                padding: 6px 12px;
-            }
-
-            QPushButton:hover {
-                background-color: #d00030;
-            }
-
-            QPushButton:pressed {
-                background-color: #800018;
-            }
-            """
+        button.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
         )
 
-        return self.stop_all_button
+        return button
 
-    # ================================================================
+    # =================================================================
     # PWM COMBO
-    # ================================================================
+    # =================================================================
 
     @staticmethod
-    def _create_pwm_combo(
-    ) -> QComboBox:
+    def _create_pwm_combo() -> QComboBox:
         """Create PWM selector from config.PWM_LEVELS."""
 
         combo = QComboBox()
@@ -640,15 +1236,16 @@ class ControlTab(QWidget):
 
         return combo
 
-    # ================================================================
+    # =================================================================
     # SIGNAL CONNECTIONS
-    # ================================================================
+    # =================================================================
 
     def _connect_internal_signals(
         self,
     ) -> None:
-        """Connect widgets to public ControlTab signals."""
+        """Connect widgets to existing public signals."""
 
+        # Main fan
         self.main_fan_button.toggled.connect(
             self._on_main_fan_toggled
         )
@@ -657,6 +1254,7 @@ class ControlTab(QWidget):
             self._on_main_fan_pwm_changed
         )
 
+        # Smoke fan
         self.smoke_fan_button.toggled.connect(
             self._on_smoke_fan_toggled
         )
@@ -665,6 +1263,7 @@ class ControlTab(QWidget):
             self._on_smoke_fan_pwm_changed
         )
 
+        # Sensors
         self.sensor_1_button.toggled.connect(
             self._on_sensor_1_toggled
         )
@@ -673,10 +1272,12 @@ class ControlTab(QWidget):
             self._on_sensor_2_toggled
         )
 
+        # Smoke machine
         self.smoke_machine_button.toggled.connect(
             self._on_smoke_machine_toggled
         )
 
+        # Recording
         self.start_recording_button.clicked.connect(
             self.start_recording_requested.emit
         )
@@ -685,13 +1286,14 @@ class ControlTab(QWidget):
             self.stop_recording_requested.emit
         )
 
+        # STOP ALL
         self.stop_all_button.clicked.connect(
             self.stop_all_requested.emit
         )
 
-    # ================================================================
-    # FAN EVENTS
-    # ================================================================
+    # =================================================================
+    # MAIN FAN EVENTS
+    # =================================================================
 
     def _on_main_fan_toggled(
         self,
@@ -700,6 +1302,11 @@ class ControlTab(QWidget):
 
         self._set_toggle_button_text(
             self.main_fan_button,
+            active,
+        )
+
+        self._set_state_label(
+            self.main_fan_state_label,
             active,
         )
 
@@ -721,6 +1328,10 @@ class ControlTab(QWidget):
                 int(pwm)
             )
 
+    # =================================================================
+    # SMOKE FAN EVENTS
+    # =================================================================
+
     def _on_smoke_fan_toggled(
         self,
         active: bool,
@@ -728,6 +1339,11 @@ class ControlTab(QWidget):
 
         self._set_toggle_button_text(
             self.smoke_fan_button,
+            active,
+        )
+
+        self._set_state_label(
+            self.smoke_fan_state_label,
             active,
         )
 
@@ -749,9 +1365,9 @@ class ControlTab(QWidget):
                 int(pwm)
             )
 
-    # ================================================================
+    # =================================================================
     # SENSOR EVENTS
-    # ================================================================
+    # =================================================================
 
     def _on_sensor_1_toggled(
         self,
@@ -762,6 +1378,17 @@ class ControlTab(QWidget):
             self.sensor_1_button,
             active,
         )
+
+        self._set_state_label(
+            self.sensor_1_state_label,
+            active,
+        )
+
+        if not active:
+
+            self.set_sensor_1_voltage(
+                None
+            )
 
         self.sensor_1_active_changed.emit(
             active
@@ -777,13 +1404,24 @@ class ControlTab(QWidget):
             active,
         )
 
+        self._set_state_label(
+            self.sensor_2_state_label,
+            active,
+        )
+
+        if not active:
+
+            self.set_sensor_2_voltage(
+                None
+            )
+
         self.sensor_2_active_changed.emit(
             active
         )
 
-    # ================================================================
+    # =================================================================
     # SMOKE MACHINE EVENT
-    # ================================================================
+    # =================================================================
 
     def _on_smoke_machine_toggled(
         self,
@@ -795,13 +1433,18 @@ class ControlTab(QWidget):
             active,
         )
 
+        self._set_state_label(
+            self.smoke_machine_state_label,
+            active,
+        )
+
         self.smoke_machine_active_changed.emit(
             active
         )
 
-    # ================================================================
+    # =================================================================
     # INITIAL STATE
-    # ================================================================
+    # =================================================================
 
     def _set_initial_state(
         self,
@@ -832,6 +1475,14 @@ class ControlTab(QWidget):
             config.DEFAULT_SENSOR_2_ACTIVE
         )
 
+        self.set_sensor_1_voltage(
+            None
+        )
+
+        self.set_sensor_2_voltage(
+            None
+        )
+
         self.set_smoke_machine_active(
             config.DEFAULT_SMOKE_MACHINE_ACTIVE
         )
@@ -844,9 +1495,9 @@ class ControlTab(QWidget):
             False
         )
 
-    # ================================================================
-    # HELPER
-    # ================================================================
+    # =================================================================
+    # DISPLAY HELPERS
+    # =================================================================
 
     @staticmethod
     def _set_toggle_button_text(
@@ -860,9 +1511,39 @@ class ControlTab(QWidget):
             else "OFF"
         )
 
-    # ================================================================
+    @staticmethod
+    def _set_state_label(
+        label: QLabel,
+        active: bool,
+    ) -> None:
+        """Update a small card state label."""
+
+        label.setText(
+            "ON"
+            if active
+            else "OFF"
+        )
+
+        set_label_role(
+            label,
+            "statusOn"
+            if active
+            else "statusOff",
+        )
+
+    @staticmethod
+    def _format_voltage(
+        voltage: Optional[float],
+    ) -> str:
+
+        if voltage is None:
+            return "-- V"
+
+        return f"{float(voltage):.3f} V"
+
+    # =================================================================
     # PUBLIC FAN UPDATE METHODS
-    # ================================================================
+    # =================================================================
 
     def set_main_fan_active(
         self,
@@ -886,6 +1567,11 @@ class ControlTab(QWidget):
             False
         )
 
+        self._set_state_label(
+            self.main_fan_state_label,
+            active,
+        )
+
     def set_smoke_fan_active(
         self,
         active: bool,
@@ -906,6 +1592,11 @@ class ControlTab(QWidget):
 
         self.smoke_fan_button.blockSignals(
             False
+        )
+
+        self._set_state_label(
+            self.smoke_fan_state_label,
+            active,
         )
 
     def set_main_fan_pwm(
@@ -958,9 +1649,9 @@ class ControlTab(QWidget):
                 False
             )
 
-    # ================================================================
+    # =================================================================
     # PUBLIC SENSOR UPDATE METHODS
-    # ================================================================
+    # =================================================================
 
     def set_sensor_1_active(
         self,
@@ -984,6 +1675,17 @@ class ControlTab(QWidget):
             False
         )
 
+        self._set_state_label(
+            self.sensor_1_state_label,
+            active,
+        )
+
+        if not active:
+
+            self.set_sensor_1_voltage(
+                None
+            )
+
     def set_sensor_2_active(
         self,
         active: bool,
@@ -1006,9 +1708,94 @@ class ControlTab(QWidget):
             False
         )
 
-    # ================================================================
+        self._set_state_label(
+            self.sensor_2_state_label,
+            active,
+        )
+
+        if not active:
+
+            self.set_sensor_2_voltage(
+                None
+            )
+
+    # =================================================================
+    # PUBLIC SENSOR VOLTAGE DISPLAY
+    # =================================================================
+
+    def set_sensor_1_voltage(
+        self,
+        voltage: Optional[float],
+    ) -> None:
+        """
+        Update Sensor 1 voltage display.
+
+        Display-only. Does not read hardware.
+        """
+
+        self._sensor_1_voltage = voltage
+
+        self.sensor_1_voltage_label.setText(
+            self._format_voltage(
+                voltage
+            )
+        )
+
+    def set_sensor_2_voltage(
+        self,
+        voltage: Optional[float],
+    ) -> None:
+        """
+        Update Sensor 2 voltage display.
+
+        Display-only. Does not read hardware.
+        """
+
+        self._sensor_2_voltage = voltage
+
+        self.sensor_2_voltage_label.setText(
+            self._format_voltage(
+                voltage
+            )
+        )
+
+    def update_sensor_values(
+        self,
+        sensor_1_active: bool,
+        sensor_1_voltage: Optional[float],
+        sensor_2_active: bool,
+        sensor_2_voltage: Optional[float],
+    ) -> None:
+        """
+        Convenience method for MainWindow.
+
+        This allows MainWindow to update both sensor cards from the
+        same sensor sample already used for logging/live plots.
+        """
+
+        self.set_sensor_1_active(
+            sensor_1_active
+        )
+
+        self.set_sensor_2_active(
+            sensor_2_active
+        )
+
+        self.set_sensor_1_voltage(
+            sensor_1_voltage
+            if sensor_1_active
+            else None
+        )
+
+        self.set_sensor_2_voltage(
+            sensor_2_voltage
+            if sensor_2_active
+            else None
+        )
+
+    # =================================================================
     # PUBLIC SMOKE MACHINE UPDATE
-    # ================================================================
+    # =================================================================
 
     def set_smoke_machine_active(
         self,
@@ -1032,9 +1819,14 @@ class ControlTab(QWidget):
             False
         )
 
-    # ================================================================
+        self._set_state_label(
+            self.smoke_machine_state_label,
+            active,
+        )
+
+    # =================================================================
     # RECORDING STATE
-    # ================================================================
+    # =================================================================
 
     def set_recording_state(
         self,
@@ -1043,8 +1835,7 @@ class ControlTab(QWidget):
         """
         Update displayed recording state.
 
-        Whether the buttons are usable also depends on whether
-        a sequence is currently running.
+        Button availability also depends on sequence state.
         """
 
         self._recording = bool(
@@ -1054,7 +1845,17 @@ class ControlTab(QWidget):
         if self._recording:
 
             self.recording_status_label.setText(
-                "Recording"
+                "●  RECORDING"
+            )
+
+            set_label_role(
+                self.recording_status_label,
+                "statusRecording",
+            )
+
+            set_role(
+                self.start_recording_button,
+                "recording",
             )
 
         else:
@@ -1063,11 +1864,21 @@ class ControlTab(QWidget):
                 "Not recording"
             )
 
+            set_label_role(
+                self.recording_status_label,
+                "statusOff",
+            )
+
+            set_role(
+                self.start_recording_button,
+                "record",
+            )
+
         self._update_control_lock_state()
 
-    # ================================================================
+    # =================================================================
     # SEQUENCE LOCK
-    # ================================================================
+    # =================================================================
 
     def set_sequence_running(
         self,
@@ -1081,11 +1892,11 @@ class ControlTab(QWidget):
             - Smoke fan
             - PWM controls
             - Sensor controls
-            - Manual recording controls
+            - Manual recording
             - Manual-test metadata
 
         Still available:
-            - Smoke-machine manual log toggle
+            - Smoke-machine manual logging
             - STOP ALL
         """
 
@@ -1103,12 +1914,7 @@ class ControlTab(QWidget):
         self,
         enabled: bool,
     ) -> None:
-        """
-        Convenience interface.
-
-        True  -> sequence is not locking manual controls.
-        False -> manual controls are locked.
-        """
+        """Compatibility convenience method."""
 
         self.set_sequence_running(
             not enabled
@@ -1117,20 +1923,15 @@ class ControlTab(QWidget):
     def _update_control_lock_state(
         self,
     ) -> None:
-        """
-        Apply enabled/disabled states consistently.
-
-        This method keeps recording state and sequence lock state
-        from overwriting each other incorrectly.
-        """
+        """Apply enabled/disabled states consistently."""
 
         manual_enabled = (
             not self._sequence_running
         )
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Metadata
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.test_name_input.setEnabled(
             manual_enabled
@@ -1144,9 +1945,9 @@ class ControlTab(QWidget):
             manual_enabled
         )
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Fan controls
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.main_fan_button.setEnabled(
             manual_enabled
@@ -1164,9 +1965,9 @@ class ControlTab(QWidget):
             manual_enabled
         )
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Sensor controls
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.sensor_1_button.setEnabled(
             manual_enabled
@@ -1176,9 +1977,9 @@ class ControlTab(QWidget):
             manual_enabled
         )
 
-        # ------------------------------------------------------------
-        # Manual recording controls
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # Recording controls
+        # -------------------------------------------------------------
 
         if self._sequence_running:
 
@@ -1200,9 +2001,9 @@ class ControlTab(QWidget):
                 self._recording
             )
 
-        # ------------------------------------------------------------
-        # These remain available during a sequence
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # Always available
+        # -------------------------------------------------------------
 
         self.smoke_machine_button.setEnabled(
             True
@@ -1212,9 +2013,9 @@ class ControlTab(QWidget):
             True
         )
 
-    # ================================================================
+    # =================================================================
     # METADATA ACCESS
-    # ================================================================
+    # =================================================================
 
     def get_test_metadata(
         self,

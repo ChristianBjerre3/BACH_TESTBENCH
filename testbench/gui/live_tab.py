@@ -1,19 +1,20 @@
 """
 gui/live_tab.py
 
-Live data tab for the airflow/smoke test bench GUI.
+Redesigned LIVE DATA interface for the Airflow Smoke Test Bench.
 
-This tab displays:
-    - Sensor 1 voltage
-    - Sensor 2 voltage
-    - Main fan state and PWM
-    - Smoke fan state and PWM
-    - Manual smoke-machine state
-    - Recording elapsed time
-    - Sequence state
-    - Live plots for both optical sensors
+This tab is display-only.
 
-This module only displays data.
+It displays:
+    - Sensor 1 state and live voltage
+    - Sensor 2 state and live voltage
+    - Main fan state and commanded PWM
+    - Smoke fan state and commanded PWM
+    - Smoke-machine manually logged state
+    - Recording state and elapsed recording time
+    - Sequence state and current sequence step
+    - One combined Sensor 1 / Sensor 2 live graph
+    - Sequence step-transition markers on the graph
 
 It does NOT:
     - Read the ADC directly
@@ -21,9 +22,9 @@ It does NOT:
     - Control fans
     - Control LEDs
     - Start or stop recording
+    - Run sequences
 
-The MainWindow will later update this tab with the current
-TestSession and sensor values.
+MainWindow pushes all current state and live data into this widget.
 """
 
 from __future__ import annotations
@@ -33,37 +34,54 @@ from typing import Optional
 
 import pyqtgraph as pg
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QGridLayout,
-    QGroupBox,
+    QFrame,
     QLabel,
+    QSizePolicy,
 )
 
 import config
 
+from gui.styles import (
+    set_card,
+    set_label_role,
+    PAGE_MARGIN,
+    CARD_SPACING,
+    PLOT_BACKGROUND,
+    PLOT_FOREGROUND,
+    PLOT_GRID_ALPHA,
+    SENSOR_1_COLOR,
+    SENSOR_2_COLOR,
+    SEQUENCE_MARKER_COLOR,
+    PLOT_LINE_WIDTH,
+)
+
 
 class LiveTab(QWidget):
     """
-    Live measurement and status display.
+    Main LIVE DATA dashboard.
+
+    This widget only displays state/data supplied by MainWindow.
     """
 
-    def __init__(self, parent=None) -> None:
-        """
-        Initialize the Live Data tab.
-        """
+    # =================================================================
+    # INITIALIZATION
+    # =================================================================
 
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
 
-        # ------------------------------------------------------------
-        # Plot data storage
-        # ------------------------------------------------------------
-
-        max_points = int(
-            config.LIVE_PLOT_TIME_WINDOW_S
-            * config.SENSOR_SAMPLE_RATE_HZ
+        max_points = max(
+            1,
+            int(
+                config.LIVE_PLOT_TIME_WINDOW_S
+                * config.SENSOR_SAMPLE_RATE_HZ
+            ),
         )
 
         self._time_data = deque(
@@ -78,47 +96,424 @@ class LiveTab(QWidget):
             maxlen=max_points
         )
 
+        # Graphics objects used for sequence-step markers.
+        self._sequence_markers = []
+
         self._build_ui()
 
-    # ================================================================
+    # =================================================================
     # BUILD UI
-    # ================================================================
+    # =================================================================
 
     def _build_ui(self) -> None:
-        """
-        Create all widgets and layouts.
-        """
+        """Build redesigned LIVE DATA dashboard."""
 
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(8, 8, 8, 8)
-        main_layout.setSpacing(8)
-
-        status_layout = QHBoxLayout()
-        status_layout.setSpacing(8)
-        status_layout.addWidget(self._create_sensor_status_group())
-        status_layout.addWidget(self._create_fan_status_group())
-        main_layout.addLayout(status_layout)
-
-        main_layout.addWidget(self._create_experiment_status_group())
-        main_layout.addWidget(self._create_sensor_1_plot_group(), stretch=1)
-        main_layout.addWidget(self._create_sensor_2_plot_group(), stretch=1)
-
-    # ================================================================
-    # SENSOR STATUS
-    # ================================================================
-
-    def _create_sensor_status_group(
-        self,
-    ) -> QGroupBox:
-        """
-        Create numerical optical-sensor displays.
-        """
-
-        group = QGroupBox(
-            "Optical sensors"
+        main_layout = QHBoxLayout(
+            self
         )
 
-        layout = QGridLayout(group)
+        main_layout.setContentsMargins(
+            PAGE_MARGIN,
+            PAGE_MARGIN,
+            PAGE_MARGIN,
+            PAGE_MARGIN,
+        )
+
+        main_layout.setSpacing(
+            CARD_SPACING
+        )
+
+        # -------------------------------------------------------------
+        # Left:
+        # Main graph
+        # -------------------------------------------------------------
+
+        self.graph_card = (
+            self._create_graph_card()
+        )
+
+        main_layout.addWidget(
+            self.graph_card,
+            stretch=3,
+        )
+
+        # -------------------------------------------------------------
+        # Right:
+        # Live values + system status + recording
+        # -------------------------------------------------------------
+
+        right_layout = QVBoxLayout()
+
+        right_layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
+
+        right_layout.setSpacing(
+            CARD_SPACING
+        )
+
+        self.live_values_card = (
+            self._create_live_values_card()
+        )
+
+        self.system_status_card = (
+            self._create_system_status_card()
+        )
+
+        self.recording_card = (
+            self._create_recording_card()
+        )
+
+        right_layout.addWidget(
+            self.live_values_card
+        )
+
+        right_layout.addWidget(
+            self.system_status_card,
+            stretch=1,
+        )
+
+        right_layout.addWidget(
+            self.recording_card
+        )
+
+        right_container = QWidget()
+
+        right_container.setLayout(
+            right_layout
+        )
+
+        right_container.setMinimumWidth(
+            300
+        )
+
+        right_container.setMaximumWidth(
+            430
+        )
+
+        main_layout.addWidget(
+            right_container,
+            stretch=1,
+        )
+
+    # =================================================================
+    # CARD HELPERS
+    # =================================================================
+
+    @staticmethod
+    def _new_card() -> QFrame:
+        """Create a standard dashboard card."""
+
+        card = QFrame()
+
+        card.setFrameShape(
+            QFrame.Shape.NoFrame
+        )
+
+        set_card(
+            card
+        )
+
+        return card
+
+    @staticmethod
+    def _card_title(
+        text: str,
+    ) -> QLabel:
+        """Create card title."""
+
+        label = QLabel(
+            text.upper()
+        )
+
+        set_label_role(
+            label,
+            "cardTitle",
+        )
+
+        return label
+
+    @staticmethod
+    def _field_label(
+        text: str,
+    ) -> QLabel:
+        """Create muted field label."""
+
+        label = QLabel(
+            text
+        )
+
+        set_label_role(
+            label,
+            "fieldLabel",
+        )
+
+        return label
+
+    @staticmethod
+    def _set_state_label(
+        label: QLabel,
+        active: bool,
+        on_text: str = "ON",
+        off_text: str = "OFF",
+    ) -> None:
+        """Set label text and active/inactive styling."""
+
+        label.setText(
+            on_text
+            if active
+            else off_text
+        )
+
+        set_label_role(
+            label,
+            "statusOn"
+            if active
+            else "statusOff",
+        )
+
+    # =================================================================
+    # GRAPH CARD
+    # =================================================================
+
+    def _create_graph_card(
+        self,
+    ) -> QFrame:
+        """Create main combined sensor graph."""
+
+        card = self._new_card()
+
+        layout = QVBoxLayout(
+            card
+        )
+
+        layout.setContentsMargins(
+            16,
+            14,
+            16,
+            16,
+        )
+
+        layout.setSpacing(
+            8
+        )
+
+        # -------------------------------------------------------------
+        # Header
+        # -------------------------------------------------------------
+
+        header = QHBoxLayout()
+
+        title_area = QVBoxLayout()
+
+        title_area.setSpacing(
+            2
+        )
+
+        title_area.addWidget(
+            self._card_title(
+                "Sensor Live Data"
+            )
+        )
+
+        subtitle = QLabel(
+            "Optical sensor voltage over live experiment time"
+        )
+
+        set_label_role(
+            subtitle,
+            "muted",
+        )
+
+        title_area.addWidget(
+            subtitle
+        )
+
+        header.addLayout(
+            title_area
+        )
+
+        header.addStretch()
+
+        window_label = QLabel(
+            f"Live window: {config.LIVE_PLOT_TIME_WINDOW_S} s"
+        )
+
+        set_label_role(
+            window_label,
+            "muted",
+        )
+
+        header.addWidget(
+            window_label
+        )
+
+        layout.addLayout(
+            header
+        )
+
+        # -------------------------------------------------------------
+        # Plot
+        # -------------------------------------------------------------
+
+        self.plot = pg.PlotWidget()
+
+        self.plot.setBackground(
+            PLOT_BACKGROUND
+        )
+
+        self.plot.setLabel(
+            "left",
+            "Voltage",
+            units="V",
+        )
+
+        self.plot.setLabel(
+            "bottom",
+            "Time",
+            units="s",
+        )
+
+        self.plot.showGrid(
+            x=True,
+            y=True,
+            alpha=PLOT_GRID_ALPHA,
+        )
+
+        self.plot.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+
+        self.plot.setMinimumHeight(
+            420
+        )
+
+        # -------------------------------------------------------------
+        # Axis appearance
+        # -------------------------------------------------------------
+
+        for axis_name in (
+            "left",
+            "bottom",
+        ):
+
+            axis = self.plot.getAxis(
+                axis_name
+            )
+
+            axis.setTextPen(
+                pg.mkPen(
+                    PLOT_FOREGROUND
+                )
+            )
+
+            axis.setPen(
+                pg.mkPen(
+                    PLOT_FOREGROUND
+                )
+            )
+
+        # -------------------------------------------------------------
+        # Legend
+        # -------------------------------------------------------------
+
+        legend = self.plot.addLegend(
+            offset=(10, 10)
+        )
+
+        legend.setLabelTextColor(
+            PLOT_FOREGROUND
+        )
+
+        # -------------------------------------------------------------
+        # Curves
+        # -------------------------------------------------------------
+
+        self.sensor_1_curve = self.plot.plot(
+            pen=pg.mkPen(
+                SENSOR_1_COLOR,
+                width=PLOT_LINE_WIDTH,
+            ),
+            name="Sensor 1",
+            connect="finite",
+        )
+
+        self.sensor_2_curve = self.plot.plot(
+            pen=pg.mkPen(
+                SENSOR_2_COLOR,
+                width=PLOT_LINE_WIDTH,
+            ),
+            name="Sensor 2",
+            connect="finite",
+        )
+
+        # Initial visible time interval.
+        self.plot.setXRange(
+            0.0,
+            min(
+                10.0,
+                float(
+                    config.LIVE_PLOT_TIME_WINDOW_S
+                ),
+            ),
+            padding=0.0,
+        )
+
+        layout.addWidget(
+            self.plot,
+            stretch=1,
+        )
+
+        return card
+
+    # =================================================================
+    # LIVE VALUES CARD
+    # =================================================================
+
+    def _create_live_values_card(
+        self,
+    ) -> QFrame:
+        """Create prominent Sensor 1 and Sensor 2 values."""
+
+        card = self._new_card()
+
+        layout = QVBoxLayout(
+            card
+        )
+
+        layout.setContentsMargins(
+            16,
+            14,
+            16,
+            16,
+        )
+
+        layout.setSpacing(
+            10
+        )
+
+        layout.addWidget(
+            self._card_title(
+                "Live Values"
+            )
+        )
+
+        # -------------------------------------------------------------
+        # Sensor 1
+        # -------------------------------------------------------------
+
+        sensor_1_layout = QGridLayout()
+
+        sensor_1_layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
 
         self.sensor_1_state_label = QLabel(
             "OFF"
@@ -126,6 +521,60 @@ class LiveTab(QWidget):
 
         self.sensor_1_voltage_label = QLabel(
             "-- V"
+        )
+
+        set_label_role(
+            self.sensor_1_voltage_label,
+            "liveValueSensor1",
+        )
+
+        self.sensor_1_voltage_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight
+            | Qt.AlignmentFlag.AlignVCenter
+        )
+
+        sensor_1_layout.addWidget(
+            self._field_label(
+                "Sensor 1"
+            ),
+            0,
+            0,
+        )
+
+        sensor_1_layout.addWidget(
+            self.sensor_1_state_label,
+            0,
+            1,
+        )
+
+        sensor_1_layout.addWidget(
+            self.sensor_1_voltage_label,
+            1,
+            0,
+            1,
+            2,
+        )
+
+        layout.addLayout(
+            sensor_1_layout
+        )
+
+        # Divider
+        layout.addWidget(
+            self._create_divider()
+        )
+
+        # -------------------------------------------------------------
+        # Sensor 2
+        # -------------------------------------------------------------
+
+        sensor_2_layout = QGridLayout()
+
+        sensor_2_layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
         )
 
         self.sensor_2_state_label = QLabel(
@@ -136,68 +585,96 @@ class LiveTab(QWidget):
             "-- V"
         )
 
-        self.sensor_1_voltage_label.setStyleSheet(
-            "font-size: 18px; font-weight: bold;"
+        set_label_role(
+            self.sensor_2_voltage_label,
+            "liveValueSensor2",
         )
 
-        self.sensor_2_voltage_label.setStyleSheet(
-            "font-size: 18px; font-weight: bold;"
+        self.sensor_2_voltage_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight
+            | Qt.AlignmentFlag.AlignVCenter
         )
 
-        layout.addWidget(
-            QLabel("Sensor 1:"),
+        sensor_2_layout.addWidget(
+            self._field_label(
+                "Sensor 2"
+            ),
             0,
             0,
         )
 
-        layout.addWidget(
-            self.sensor_1_state_label,
-            0,
-            1,
-        )
-
-        layout.addWidget(
-            self.sensor_1_voltage_label,
-            0,
-            2,
-        )
-
-        layout.addWidget(
-            QLabel("Sensor 2:"),
-            1,
-            0,
-        )
-
-        layout.addWidget(
+        sensor_2_layout.addWidget(
             self.sensor_2_state_label,
-            1,
+            0,
             1,
         )
 
-        layout.addWidget(
+        sensor_2_layout.addWidget(
             self.sensor_2_voltage_label,
             1,
+            0,
+            1,
             2,
         )
 
-        return group
-
-    # ================================================================
-    # FAN STATUS
-    # ================================================================
-
-    def _create_fan_status_group(
-        self,
-    ) -> QGroupBox:
-        """
-        Create main-fan and smoke-fan status display.
-        """
-
-        group = QGroupBox(
-            "Fans"
+        layout.addLayout(
+            sensor_2_layout
         )
 
-        layout = QGridLayout(group)
+        return card
+
+    # =================================================================
+    # SYSTEM STATUS CARD
+    # =================================================================
+
+    def _create_system_status_card(
+        self,
+    ) -> QFrame:
+        """Create complete experiment/system state card."""
+
+        card = self._new_card()
+
+        layout = QVBoxLayout(
+            card
+        )
+
+        layout.setContentsMargins(
+            16,
+            14,
+            16,
+            16,
+        )
+
+        layout.setSpacing(
+            10
+        )
+
+        layout.addWidget(
+            self._card_title(
+                "System Status"
+            )
+        )
+
+        grid = QGridLayout()
+
+        grid.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
+
+        grid.setHorizontalSpacing(
+            8
+        )
+
+        grid.setVerticalSpacing(
+            9
+        )
+
+        # -------------------------------------------------------------
+        # Main fan
+        # -------------------------------------------------------------
 
         self.main_fan_state_label = QLabel(
             "OFF"
@@ -207,6 +684,14 @@ class LiveTab(QWidget):
             "0 %"
         )
 
+        self.main_fan_pwm_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight
+        )
+
+        # -------------------------------------------------------------
+        # Smoke fan
+        # -------------------------------------------------------------
+
         self.smoke_fan_state_label = QLabel(
             "OFF"
         )
@@ -215,84 +700,29 @@ class LiveTab(QWidget):
             "0 %"
         )
 
-        layout.addWidget(
-            QLabel("Main fan:"),
-            0,
-            0,
+        self.smoke_fan_pwm_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight
         )
 
-        layout.addWidget(
-            self.main_fan_state_label,
-            0,
-            1,
+        # -------------------------------------------------------------
+        # Smoke machine
+        # -------------------------------------------------------------
+
+        self.smoke_machine_state_label = QLabel(
+            "OFF"
         )
 
-        layout.addWidget(
-            QLabel("PWM:"),
-            0,
-            2,
-        )
-
-        layout.addWidget(
-            self.main_fan_pwm_label,
-            0,
-            3,
-        )
-
-        layout.addWidget(
-            QLabel("Smoke fan:"),
-            1,
-            0,
-        )
-
-        layout.addWidget(
-            self.smoke_fan_state_label,
-            1,
-            1,
-        )
-
-        layout.addWidget(
-            QLabel("PWM:"),
-            1,
-            2,
-        )
-
-        layout.addWidget(
-            self.smoke_fan_pwm_label,
-            1,
-            3,
-        )
-
-        return group
-
-    # ================================================================
-    # EXPERIMENT STATUS
-    # ================================================================
-
-    def _create_experiment_status_group(
-        self,
-    ) -> QGroupBox:
-        """
-        Create recording, smoke-machine and sequence status.
-        """
-
-        group = QGroupBox(
-            "Experiment status"
-        )
-
-        layout = QGridLayout(group)
+        # -------------------------------------------------------------
+        # Recording
+        # -------------------------------------------------------------
 
         self.recording_state_label = QLabel(
             "Not recording"
         )
 
-        self.elapsed_time_label = QLabel(
-            "0.0 s"
-        )
-
-        self.smoke_machine_state_label = QLabel(
-            "OFF"
-        )
+        # -------------------------------------------------------------
+        # Sequence
+        # -------------------------------------------------------------
 
         self.sequence_state_label = QLabel(
             "Stopped"
@@ -302,165 +732,226 @@ class LiveTab(QWidget):
             "-"
         )
 
-        layout.addWidget(
-            QLabel("Recording:"),
-            0,
-            0,
+        self.sequence_step_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight
         )
 
-        layout.addWidget(
-            self.recording_state_label,
-            0,
-            1,
+        # -------------------------------------------------------------
+        # Rows
+        # -------------------------------------------------------------
+
+        row = 0
+
+        row = self._add_status_row(
+            grid,
+            row,
+            "Main fan",
+            self.main_fan_state_label,
+            self.main_fan_pwm_label,
         )
 
-        layout.addWidget(
-            QLabel("Elapsed time:"),
-            0,
-            2,
+        row = self._add_status_row(
+            grid,
+            row,
+            "Smoke fan",
+            self.smoke_fan_state_label,
+            self.smoke_fan_pwm_label,
         )
 
-        layout.addWidget(
-            self.elapsed_time_label,
-            0,
-            3,
-        )
-
-        layout.addWidget(
-            QLabel("Smoke machine:"),
-            1,
-            0,
-        )
-
-        layout.addWidget(
+        row = self._add_status_row(
+            grid,
+            row,
+            "Smoke machine",
             self.smoke_machine_state_label,
-            1,
-            1,
+            None,
         )
 
-        layout.addWidget(
-            QLabel("Sequence:"),
-            1,
-            2,
+        row = self._add_status_row(
+            grid,
+            row,
+            "Recording",
+            self.recording_state_label,
+            None,
         )
 
-        layout.addWidget(
+        self._add_status_row(
+            grid,
+            row,
+            "Sequence",
             self.sequence_state_label,
-            1,
-            3,
-        )
-
-        layout.addWidget(
-            QLabel("Sequence step:"),
-            2,
-            2,
-        )
-
-        layout.addWidget(
             self.sequence_step_label,
+        )
+
+        grid.setColumnStretch(
+            0,
+            1,
+        )
+
+        grid.setColumnStretch(
+            1,
+            1,
+        )
+
+        grid.setColumnStretch(
             2,
-            3,
+            1,
         )
 
-        return group
+        layout.addLayout(
+            grid
+        )
 
-    # ================================================================
-    # SENSOR 1 PLOT
-    # ================================================================
+        layout.addStretch()
 
-    def _create_sensor_1_plot_group(
+        return card
+
+    # =================================================================
+    # RECORDING CARD
+    # =================================================================
+
+    def _create_recording_card(
         self,
-    ) -> QGroupBox:
-        """
-        Create live voltage plot for Sensor 1.
-        """
+    ) -> QFrame:
+        """Create recording state / timer card."""
 
-        group = QGroupBox(
-            "Sensor 1 live voltage"
+        card = self._new_card()
+
+        layout = QHBoxLayout(
+            card
         )
 
-        layout = QVBoxLayout(group)
-
-        self.sensor_1_plot = pg.PlotWidget()
-
-        self.sensor_1_plot.setLabel(
-            "left",
-            "Voltage",
-            units="V",
+        layout.setContentsMargins(
+            16,
+            14,
+            16,
+            14,
         )
 
-        self.sensor_1_plot.setLabel(
-            "bottom",
-            "Time",
-            units="s",
+        layout.setSpacing(
+            10
         )
 
-        self.sensor_1_plot.showGrid(
-            x=True,
-            y=True,
-            alpha=0.3,
+        text_layout = QVBoxLayout()
+
+        text_layout.setSpacing(
+            2
         )
 
-        self.sensor_1_curve = (
-            self.sensor_1_plot.plot()
+        text_layout.addWidget(
+            self._card_title(
+                "Recording"
+            )
+        )
+
+        self.recording_bottom_state_label = QLabel(
+            "Not recording"
+        )
+
+        set_label_role(
+            self.recording_bottom_state_label,
+            "statusOff",
+        )
+
+        text_layout.addWidget(
+            self.recording_bottom_state_label
+        )
+
+        layout.addLayout(
+            text_layout
+        )
+
+        layout.addStretch()
+
+        self.elapsed_time_label = QLabel(
+            "0.0 s"
+        )
+
+        set_label_role(
+            self.elapsed_time_label,
+            "timer",
         )
 
         layout.addWidget(
-            self.sensor_1_plot
+            self.elapsed_time_label
         )
 
-        return group
+        return card
 
-    # ================================================================
-    # SENSOR 2 PLOT
-    # ================================================================
+    # =================================================================
+    # HELPERS
+    # =================================================================
 
-    def _create_sensor_2_plot_group(
-        self,
-    ) -> QGroupBox:
-        """
-        Create live voltage plot for Sensor 2.
-        """
+    @staticmethod
+    def _create_divider() -> QFrame:
+        """Create subtle horizontal divider."""
 
-        group = QGroupBox(
-            "Sensor 2 live voltage"
+        divider = QFrame()
+
+        divider.setFrameShape(
+            QFrame.Shape.HLine
         )
 
-        layout = QVBoxLayout(group)
-
-        self.sensor_2_plot = pg.PlotWidget()
-
-        self.sensor_2_plot.setLabel(
-            "left",
-            "Voltage",
-            units="V",
+        divider.setFrameShadow(
+            QFrame.Shadow.Plain
         )
 
-        self.sensor_2_plot.setLabel(
-            "bottom",
-            "Time",
-            units="s",
+        divider.setStyleSheet(
+            """
+            QFrame {
+                color: #243A4D;
+                background-color: #243A4D;
+                max-height: 1px;
+                border: none;
+            }
+            """
         )
 
-        self.sensor_2_plot.showGrid(
-            x=True,
-            y=True,
-            alpha=0.3,
+        return divider
+
+    @staticmethod
+    def _add_status_row(
+        grid: QGridLayout,
+        row: int,
+        title: str,
+        value_a: QLabel,
+        value_b: Optional[QLabel],
+    ) -> int:
+        """Add one row to the system-status grid."""
+
+        title_label = QLabel(
+            title
         )
 
-        self.sensor_2_curve = (
-            self.sensor_2_plot.plot()
+        set_label_role(
+            title_label,
+            "fieldLabel",
         )
 
-        layout.addWidget(
-            self.sensor_2_plot
+        grid.addWidget(
+            title_label,
+            row,
+            0,
         )
 
-        return group
+        grid.addWidget(
+            value_a,
+            row,
+            1,
+        )
 
-    # ================================================================
+        if value_b is not None:
+
+            grid.addWidget(
+                value_b,
+                row,
+                2,
+            )
+
+        return row + 1
+
+    # =================================================================
     # SENSOR VALUES
-    # ================================================================
+    # =================================================================
 
     def update_sensor_values(
         self,
@@ -469,47 +960,37 @@ class LiveTab(QWidget):
         sensor_2_active: bool,
         sensor_2_voltage: Optional[float],
     ) -> None:
-        """
-        Update numerical sensor display.
+        """Update Sensor 1 and Sensor 2 numerical displays."""
 
-        Parameters
-        ----------
-        sensor_1_active:
-            Current Sensor 1 active state.
-
-        sensor_1_voltage:
-            Current Sensor 1 voltage or None.
-
-        sensor_2_active:
-            Current Sensor 2 active state.
-
-        sensor_2_voltage:
-            Current Sensor 2 voltage or None.
-        """
-
-        self.sensor_1_state_label.setText(
-            "ON" if sensor_1_active else "OFF"
+        self._set_state_label(
+            self.sensor_1_state_label,
+            sensor_1_active,
         )
 
-        self.sensor_2_state_label.setText(
-            "ON" if sensor_2_active else "OFF"
+        self._set_state_label(
+            self.sensor_2_state_label,
+            sensor_2_active,
         )
 
         self.sensor_1_voltage_label.setText(
             self._format_voltage(
                 sensor_1_voltage
+                if sensor_1_active
+                else None
             )
         )
 
         self.sensor_2_voltage_label.setText(
             self._format_voltage(
                 sensor_2_voltage
+                if sensor_2_active
+                else None
             )
         )
 
-    # ================================================================
+    # =================================================================
     # FAN VALUES
-    # ================================================================
+    # =================================================================
 
     def update_fan_status(
         self,
@@ -518,33 +999,29 @@ class LiveTab(QWidget):
         smoke_fan_active: bool,
         smoke_fan_pwm_percent: int,
     ) -> None:
-        """
-        Update fan state and PWM displays.
-        """
+        """Update fan state and commanded PWM displays."""
 
-        self.main_fan_state_label.setText(
-            "ON"
-            if main_fan_active
-            else "OFF"
+        self._set_state_label(
+            self.main_fan_state_label,
+            main_fan_active,
         )
 
         self.main_fan_pwm_label.setText(
-            f"{main_fan_pwm_percent} %"
+            f"{int(main_fan_pwm_percent)} %"
         )
 
-        self.smoke_fan_state_label.setText(
-            "ON"
-            if smoke_fan_active
-            else "OFF"
+        self._set_state_label(
+            self.smoke_fan_state_label,
+            smoke_fan_active,
         )
 
         self.smoke_fan_pwm_label.setText(
-            f"{smoke_fan_pwm_percent} %"
+            f"{int(smoke_fan_pwm_percent)} %"
         )
 
-    # ================================================================
+    # =================================================================
     # EXPERIMENT STATUS
-    # ================================================================
+    # =================================================================
 
     def update_experiment_status(
         self,
@@ -554,94 +1031,310 @@ class LiveTab(QWidget):
         sequence_running: bool,
         sequence_step: Optional[int] = None,
     ) -> None:
-        """
-        Update general experiment status.
-        """
+        """Update recording, smoke-machine and sequence state."""
 
-        self.recording_state_label.setText(
-            "Recording"
-            if recording
-            else "Not recording"
+        # -------------------------------------------------------------
+        # Smoke machine
+        # -------------------------------------------------------------
+
+        self._set_state_label(
+            self.smoke_machine_state_label,
+            smoke_machine_active,
         )
+
+        # -------------------------------------------------------------
+        # Recording
+        # -------------------------------------------------------------
+
+        if recording:
+
+            self.recording_state_label.setText(
+                "● Recording"
+            )
+
+            self.recording_bottom_state_label.setText(
+                "● RECORDING"
+            )
+
+            set_label_role(
+                self.recording_state_label,
+                "statusRecording",
+            )
+
+            set_label_role(
+                self.recording_bottom_state_label,
+                "statusRecording",
+            )
+
+        else:
+
+            self.recording_state_label.setText(
+                "Not recording"
+            )
+
+            self.recording_bottom_state_label.setText(
+                "Not recording"
+            )
+
+            set_label_role(
+                self.recording_state_label,
+                "statusOff",
+            )
+
+            set_label_role(
+                self.recording_bottom_state_label,
+                "statusOff",
+            )
 
         self.elapsed_time_label.setText(
-            f"{elapsed_time_s:.1f} s"
+            f"{float(elapsed_time_s):.1f} s"
         )
 
-        self.smoke_machine_state_label.setText(
-            "ON"
-            if smoke_machine_active
-            else "OFF"
-        )
+        # -------------------------------------------------------------
+        # Sequence
+        # -------------------------------------------------------------
 
-        self.sequence_state_label.setText(
-            "Running"
-            if sequence_running
-            else "Stopped"
+        self._set_state_label(
+            self.sequence_state_label,
+            sequence_running,
+            on_text="Running",
+            off_text="Stopped",
         )
 
         if sequence_step is None:
+
             self.sequence_step_label.setText(
                 "-"
             )
-        else:
-            self.sequence_step_label.setText(
-                str(sequence_step)
+
+            set_label_role(
+                self.sequence_step_label,
+                "statusOff",
             )
 
-    # ================================================================
+        else:
+
+            self.sequence_step_label.setText(
+                f"Step {int(sequence_step)}"
+            )
+
+            set_label_role(
+                self.sequence_step_label,
+                "statusOn",
+            )
+
+    # =================================================================
     # PLOT DATA
-    # ================================================================
+    # =================================================================
 
     def add_plot_sample(
         self,
-        elapsed_time_s: float,
+        live_time_s: float,
         sensor_1_voltage: Optional[float],
         sensor_2_voltage: Optional[float],
     ) -> None:
         """
-        Add one new sample to the live plots.
+        Add one sample to the combined graph.
 
-        None values are stored as NaN so pyqtgraph leaves a gap
-        instead of drawing a false zero measurement.
+        live_time_s is the GUI live timebase supplied by MainWindow.
+
+        None values are stored as NaN so the graph contains a gap
+        rather than drawing a false zero value.
         """
 
         self._time_data.append(
-            float(elapsed_time_s)
+            float(live_time_s)
         )
 
+        # Sensor 1
         if sensor_1_voltage is None:
+
             self._sensor_1_data.append(
                 float("nan")
             )
+
         else:
+
             self._sensor_1_data.append(
                 float(sensor_1_voltage)
             )
 
+        # Sensor 2
         if sensor_2_voltage is None:
+
             self._sensor_2_data.append(
                 float("nan")
             )
+
         else:
+
             self._sensor_2_data.append(
                 float(sensor_2_voltage)
             )
 
+        times = list(
+            self._time_data
+        )
+
         self.sensor_1_curve.setData(
-            list(self._time_data),
-            list(self._sensor_1_data),
+            times,
+            list(
+                self._sensor_1_data
+            ),
         )
 
         self.sensor_2_curve.setData(
-            list(self._time_data),
-            list(self._sensor_2_data),
+            times,
+            list(
+                self._sensor_2_data
+            ),
         )
 
-    def clear_plots(self) -> None:
+        # -------------------------------------------------------------
+        # Maintain configured rolling X window
+        # -------------------------------------------------------------
+
+        if times:
+
+            latest_time = times[-1]
+
+            earliest_visible = max(
+                0.0,
+                latest_time
+                - config.LIVE_PLOT_TIME_WINDOW_S,
+            )
+
+            self.plot.setXRange(
+                earliest_visible,
+                max(
+                    latest_time,
+                    earliest_visible + 1.0,
+                ),
+                padding=0.0,
+            )
+
+    # =================================================================
+    # SEQUENCE STEP MARKERS
+    # =================================================================
+
+    def add_sequence_step_marker(
+        self,
+        live_time_s: float,
+        step_number: int,
+    ) -> None:
         """
-        Clear all stored live-plot data.
+        Add a vertical graph marker when a sequence step begins.
+
+        Example:
+            Step 1 at t = 0 s
+            Step 2 at t = 5 s
+            Step 3 at t = 12 s
+
+        MainWindow decides when a step transition occurs and supplies
+        the live time and step number.
         """
+
+        time_value = float(
+            live_time_s
+        )
+
+        step_value = int(
+            step_number
+        )
+
+        # -------------------------------------------------------------
+        # Vertical line
+        # -------------------------------------------------------------
+
+        line = pg.InfiniteLine(
+            pos=time_value,
+            angle=90,
+            movable=False,
+            pen=pg.mkPen(
+                SEQUENCE_MARKER_COLOR,
+                width=1,
+                style=Qt.PenStyle.DashLine,
+            ),
+        )
+
+        line.setZValue(
+            10
+        )
+
+        self.plot.addItem(
+            line
+        )
+
+        # -------------------------------------------------------------
+        # Step label
+        # -------------------------------------------------------------
+
+        label = pg.TextItem(
+            text=f"Step {step_value}",
+            color=SEQUENCE_MARKER_COLOR,
+            anchor=(0, 0),
+        )
+
+        label.setZValue(
+            11
+        )
+
+        # Position the text close to the top of the current plot.
+        view_range = (
+            self.plot.getViewBox().viewRange()
+        )
+
+        y_min, y_max = (
+            view_range[1]
+        )
+
+        y_position = (
+            y_max
+            - 0.05
+            * max(
+                y_max - y_min,
+                1.0,
+            )
+        )
+
+        label.setPos(
+            time_value,
+            y_position,
+        )
+
+        self.plot.addItem(
+            label
+        )
+
+        # Store both so they can be removed on reset.
+        self._sequence_markers.append(
+            (
+                line,
+                label,
+            )
+        )
+
+    # =================================================================
+    # CLEAR PLOTS
+    # =================================================================
+
+    def clear_plots(
+        self,
+    ) -> None:
+        """
+        Clear:
+            - Sensor history
+            - Sensor curves
+            - Sequence step markers
+
+        The graph X-axis is visually reset to start at 0 s.
+
+        MainWindow is responsible for resetting the live-time epoch itself.
+        """
+
+        # -------------------------------------------------------------
+        # Data
+        # -------------------------------------------------------------
 
         self._time_data.clear()
         self._sensor_1_data.clear()
@@ -650,19 +1343,54 @@ class LiveTab(QWidget):
         self.sensor_1_curve.clear()
         self.sensor_2_curve.clear()
 
-    # ================================================================
-    # HELPERS
-    # ================================================================
+        # -------------------------------------------------------------
+        # Sequence markers
+        # -------------------------------------------------------------
+
+        for line, label in self._sequence_markers:
+
+            try:
+                self.plot.removeItem(
+                    line
+                )
+            except Exception:
+                pass
+
+            try:
+                self.plot.removeItem(
+                    label
+                )
+            except Exception:
+                pass
+
+        self._sequence_markers.clear()
+
+        # -------------------------------------------------------------
+        # Reset visible graph time
+        # -------------------------------------------------------------
+
+        self.plot.setXRange(
+            0.0,
+            min(
+                10.0,
+                float(
+                    config.LIVE_PLOT_TIME_WINDOW_S
+                ),
+            ),
+            padding=0.0,
+        )
+
+    # =================================================================
+    # VOLTAGE FORMAT
+    # =================================================================
 
     @staticmethod
     def _format_voltage(
         voltage: Optional[float],
     ) -> str:
-        """
-        Format a sensor voltage for display.
-        """
+        """Format sensor voltage."""
 
         if voltage is None:
             return "-- V"
 
-        return f"{voltage:.4f} V"
+        return f"{float(voltage):.3f} V"

@@ -1,33 +1,46 @@
 """
 gui/sequence_tab.py
 
-Sequence tab for the airflow/smoke test bench GUI.
+Redesigned SEQUENCE interface for the Airflow Smoke Test Bench.
 
-This tab represents the automatic test workflow.
+SEQUENCE is the automatic test workflow.
 
-The operator can:
-    - Enter test metadata
-    - Select which optical sensors should be active
-    - Choose whether the sequence should be recorded
-    - Manually log the smoke-machine state
-    - Build a timed fan sequence
-    - Run or stop the sequence
+Existing functionality is preserved:
+    - Test name
+    - Mount
+    - Comment
+    - Sensor 1 selection
+    - Sensor 2 selection
+    - Record sequence selection
+    - Manual smoke-machine log state
+    - Timed fan sequence table
+    - Add step
+    - Remove selected step
+    - Clear steps
+    - Total sequence duration
+    - Run sequence
+    - Stop sequence
 
-This module only defines the GUI and emits Qt signals.
+The sequence table contains:
+    - Duration
+    - Main fan ON/OFF
+    - Main fan PWM
+    - Smoke fan ON/OFF
+    - Smoke fan PWM
 
-Actual hardware control, recording, sensor control, and sequence
-execution are handled by MainWindow and the services layer.
+This module only defines GUI behavior and emits Qt signals.
+Hardware, recording and sequence execution are handled elsewhere.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QGridLayout,
-    QGroupBox,
+    QFrame,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -38,33 +51,40 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QTextEdit,
     QCheckBox,
+    QSizePolicy,
 )
 
 import config
 
+from gui.styles import (
+    set_card,
+    set_role,
+    set_label_role,
+    PAGE_MARGIN,
+    CARD_SPACING,
+)
+
 
 class SequenceTab(QWidget):
-    """
-    GUI for configuring and running automatic test sequences.
-    """
+    """GUI for configuring and running automatic test sequences."""
 
-    # ================================================================
+    # =================================================================
     # SIGNALS
-    # ================================================================
+    # =================================================================
 
     run_sequence_requested = Signal(list)
     stop_sequence_requested = Signal()
 
     smoke_machine_active_changed = Signal(bool)
 
-    # ================================================================
+    # =================================================================
     # INITIALIZATION
-    # ================================================================
+    # =================================================================
 
     def __init__(self, parent=None) -> None:
-        """Initialize the Sequence tab."""
-
         super().__init__(parent)
+
+        self._sequence_running = False
 
         self._build_ui()
         self._connect_signals()
@@ -72,179 +92,238 @@ class SequenceTab(QWidget):
         # Start with one default sequence step.
         self.add_step()
 
-        self.set_sequence_running(False)
+        self.set_sequence_running(
+            False
+        )
 
-    # ================================================================
+    # =================================================================
     # BUILD UI
-    # ================================================================
+    # =================================================================
 
     def _build_ui(self) -> None:
         """
-        Build a compact, self-contained automatic-test interface.
+        Build redesigned automatic-test interface.
+
+        Layout:
+
+        ┌──────────────────────────────────────────────┐
+        │ SEQUENCE TEST INFORMATION                    │
+        └──────────────────────────────────────────────┘
+
+        ┌───────────────────────┬──────────────────────┐
+        │ MEASUREMENTS          │ SMOKE MACHINE        │
+        └───────────────────────┴──────────────────────┘
+
+        ┌──────────────────────────────────────────────┐
+        │ SEQUENCE STEPS                               │
+        │                                              │
+        │ Table                                        │
+        │                                              │
+        │ Add Step | Remove Selected | Clear           │
+        └──────────────────────────────────────────────┘
+
+        ┌──────────────────────────────────────────────┐
+        │ TOTAL / STATUS             RUN | STOP        │
+        └──────────────────────────────────────────────┘
         """
 
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(8, 8, 8, 8)
-        main_layout.setSpacing(6)
+        main_layout = QVBoxLayout(
+            self
+        )
 
-        # ------------------------------------------------------------
+        main_layout.setContentsMargins(
+            PAGE_MARGIN,
+            PAGE_MARGIN,
+            PAGE_MARGIN,
+            PAGE_MARGIN,
+        )
+
+        main_layout.setSpacing(
+            CARD_SPACING
+        )
+
+        # -------------------------------------------------------------
         # Metadata
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
-        main_layout.addWidget(
-            self._create_metadata_group()
+        self.metadata_card = (
+            self._create_metadata_card()
         )
 
-        # ------------------------------------------------------------
-        # Measurement configuration
-        # ------------------------------------------------------------
-
         main_layout.addWidget(
-            self._create_measurement_group()
+            self.metadata_card
         )
 
-        # ------------------------------------------------------------
-        # Sequence table
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # Measurement + smoke-machine cards
+        # -------------------------------------------------------------
 
-        main_layout.addWidget(
-            self._create_sequence_group(),
+        options_layout = QHBoxLayout()
+
+        options_layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
+
+        options_layout.setSpacing(
+            CARD_SPACING
+        )
+
+        self.measurement_card = (
+            self._create_measurement_card()
+        )
+
+        self.smoke_machine_card = (
+            self._create_smoke_machine_card()
+        )
+
+        options_layout.addWidget(
+            self.measurement_card,
+            stretch=2,
+        )
+
+        options_layout.addWidget(
+            self.smoke_machine_card,
             stretch=1,
         )
 
-        # ------------------------------------------------------------
-        # Sequence editing buttons
-        # ------------------------------------------------------------
-
-        edit_layout = QHBoxLayout()
-        edit_layout.setSpacing(6)
-
-        self.add_step_button = QPushButton(
-            "Add Step"
-        )
-
-        self.remove_step_button = QPushButton(
-            "Remove Selected"
-        )
-
-        self.clear_steps_button = QPushButton(
-            "Clear"
-        )
-
-        edit_layout.addWidget(
-            self.add_step_button
-        )
-
-        edit_layout.addWidget(
-            self.remove_step_button
-        )
-
-        edit_layout.addWidget(
-            self.clear_steps_button
-        )
-
-        edit_layout.addStretch()
-
-        main_layout.addLayout(edit_layout)
-
-        # ------------------------------------------------------------
-        # Summary
-        # ------------------------------------------------------------
-
-        summary_layout = QHBoxLayout()
-        summary_layout.setSpacing(6)
-
-        summary_layout.addWidget(
-            QLabel("Total:")
-        )
-
-        self.total_duration_label = QLabel(
-            "0.0 s"
-        )
-
-        summary_layout.addWidget(
-            self.total_duration_label
-        )
-
-        summary_layout.addStretch()
-
-        summary_layout.addWidget(
-            QLabel("Status:")
-        )
-
-        self.sequence_status_label = QLabel(
-            "Stopped"
-        )
-
-        summary_layout.addWidget(
-            self.sequence_status_label
-        )
-
         main_layout.addLayout(
-            summary_layout
+            options_layout
         )
 
-        # ------------------------------------------------------------
-        # Run / stop controls
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # Sequence editor
+        # -------------------------------------------------------------
 
-        control_layout = QHBoxLayout()
-        control_layout.setSpacing(8)
-
-        self.run_sequence_button = QPushButton(
-            "RUN SEQUENCE"
+        self.sequence_card = (
+            self._create_sequence_card()
         )
 
-        self.stop_sequence_button = QPushButton(
-            "STOP SEQUENCE"
+        main_layout.addWidget(
+            self.sequence_card,
+            stretch=1,
         )
 
-        self.run_sequence_button.setMinimumHeight(
-            40
+        # -------------------------------------------------------------
+        # Run / status
+        # -------------------------------------------------------------
+
+        self.run_card = (
+            self._create_run_card()
         )
 
-        self.stop_sequence_button.setMinimumHeight(
-            40
+        main_layout.addWidget(
+            self.run_card
         )
 
-        control_layout.addWidget(
-            self.run_sequence_button
+    # =================================================================
+    # CARD HELPERS
+    # =================================================================
+
+    @staticmethod
+    def _new_card() -> QFrame:
+        """Create standard dashboard card."""
+
+        card = QFrame()
+
+        card.setFrameShape(
+            QFrame.Shape.NoFrame
         )
 
-        control_layout.addWidget(
-            self.stop_sequence_button
+        set_card(
+            card
         )
 
-        main_layout.addLayout(
-            control_layout
+        return card
+
+    @staticmethod
+    def _card_title(
+        text: str,
+    ) -> QLabel:
+        """Create card title."""
+
+        label = QLabel(
+            text.upper()
         )
 
-    # ================================================================
-    # METADATA
-    # ================================================================
+        set_label_role(
+            label,
+            "cardTitle",
+        )
 
-    def _create_metadata_group(
+        return label
+
+    @staticmethod
+    def _field_label(
+        text: str,
+    ) -> QLabel:
+        """Create field label."""
+
+        label = QLabel(
+            text
+        )
+
+        set_label_role(
+            label,
+            "fieldLabel",
+        )
+
+        return label
+
+    # =================================================================
+    # METADATA CARD
+    # =================================================================
+
+    def _create_metadata_card(
         self,
-    ) -> QGroupBox:
-        """
-        Create test metadata inputs for the sequence workflow.
-        """
+    ) -> QFrame:
+        """Create sequence test information card."""
 
-        group = QGroupBox(
-            "Sequence test information"
+        card = self._new_card()
+
+        layout = QVBoxLayout(
+            card
         )
-
-        layout = QGridLayout(group)
 
         layout.setContentsMargins(
-            6,
-            6,
-            6,
-            6,
+            16,
+            14,
+            16,
+            16,
         )
 
-        layout.setHorizontalSpacing(8)
-        layout.setVerticalSpacing(4)
+        layout.setSpacing(
+            8
+        )
+
+        layout.addWidget(
+            self._card_title(
+                "Sequence Test Information"
+            )
+        )
+
+        fields = QGridLayout()
+
+        fields.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
+
+        fields.setHorizontalSpacing(
+            12
+        )
+
+        fields.setVerticalSpacing(
+            6
+        )
+
+        # -------------------------------------------------------------
+        # Inputs
+        # -------------------------------------------------------------
 
         self.test_name_input = QLineEdit()
 
@@ -264,76 +343,114 @@ class SequenceTab(QWidget):
             "Optional comment"
         )
 
-        self.comment_input.setFixedHeight(40)
+        self.comment_input.setMaximumHeight(
+            58
+        )
 
-        layout.addWidget(
-            QLabel("Test name:"),
+        # -------------------------------------------------------------
+        # Layout
+        # -------------------------------------------------------------
+
+        fields.addWidget(
+            self._field_label(
+                "Test name"
+            ),
             0,
             0,
         )
 
-        layout.addWidget(
+        fields.addWidget(
             self.test_name_input,
-            0,
-            1,
-        )
-
-        layout.addWidget(
-            QLabel("Mount:"),
             1,
             0,
         )
 
-        layout.addWidget(
+        fields.addWidget(
+            self._field_label(
+                "Mount"
+            ),
+            0,
+            1,
+        )
+
+        fields.addWidget(
             self.mount_name_input,
             1,
             1,
         )
 
-        layout.addWidget(
-            QLabel("Comment:"),
-            2,
+        fields.addWidget(
+            self._field_label(
+                "Comment"
+            ),
             0,
+            2,
         )
 
-        layout.addWidget(
+        fields.addWidget(
             self.comment_input,
+            1,
             2,
+        )
+
+        fields.setColumnStretch(
+            0,
             1,
         )
 
-        return group
-
-    # ================================================================
-    # MEASUREMENT CONFIGURATION
-    # ================================================================
-
-    def _create_measurement_group(
-        self,
-    ) -> QGroupBox:
-        """
-        Create sensor, recording, and smoke-machine options.
-        """
-
-        group = QGroupBox(
-            "Measurements"
+        fields.setColumnStretch(
+            1,
+            1,
         )
 
-        layout = QGridLayout(group)
+        fields.setColumnStretch(
+            2,
+            2,
+        )
+
+        layout.addLayout(
+            fields
+        )
+
+        return card
+
+    # =================================================================
+    # MEASUREMENTS CARD
+    # =================================================================
+
+    def _create_measurement_card(
+        self,
+    ) -> QFrame:
+        """Create sensor and recording options."""
+
+        card = self._new_card()
+
+        layout = QVBoxLayout(
+            card
+        )
 
         layout.setContentsMargins(
-            6,
-            6,
-            6,
-            6,
+            16,
+            14,
+            16,
+            16,
         )
 
-        layout.setHorizontalSpacing(12)
-        layout.setVerticalSpacing(4)
+        layout.setSpacing(
+            10
+        )
 
-        # ------------------------------------------------------------
-        # Sensors
-        # ------------------------------------------------------------
+        layout.addWidget(
+            self._card_title(
+                "Measurements"
+            )
+        )
+
+        # -------------------------------------------------------------
+        # Sensor checkboxes
+        # -------------------------------------------------------------
+
+        sensor_row = QHBoxLayout()
 
         self.sensor_1_checkbox = QCheckBox(
             "Sensor 1"
@@ -351,9 +468,23 @@ class SequenceTab(QWidget):
             config.DEFAULT_SENSOR_2_ACTIVE
         )
 
-        # ------------------------------------------------------------
-        # Recording
-        # ------------------------------------------------------------
+        sensor_row.addWidget(
+            self.sensor_1_checkbox
+        )
+
+        sensor_row.addWidget(
+            self.sensor_2_checkbox
+        )
+
+        sensor_row.addStretch()
+
+        layout.addLayout(
+            sensor_row
+        )
+
+        # -------------------------------------------------------------
+        # Record sequence
+        # -------------------------------------------------------------
 
         self.record_sequence_checkbox = QCheckBox(
             "Record sequence"
@@ -363,9 +494,92 @@ class SequenceTab(QWidget):
             True
         )
 
-        # ------------------------------------------------------------
-        # Smoke machine
-        # ------------------------------------------------------------
+        layout.addWidget(
+            self.record_sequence_checkbox
+        )
+
+        note = QLabel(
+            "Selected sensors are active during the sequence."
+        )
+
+        set_label_role(
+            note,
+            "muted",
+        )
+
+        layout.addWidget(
+            note
+        )
+
+        return card
+
+    # =================================================================
+    # SMOKE MACHINE CARD
+    # =================================================================
+
+    def _create_smoke_machine_card(
+        self,
+    ) -> QFrame:
+        """
+        Create manual smoke-machine log card.
+
+        The smoke machine is NOT controlled by the sequence.
+        """
+
+        card = self._new_card()
+
+        layout = QVBoxLayout(
+            card
+        )
+
+        layout.setContentsMargins(
+            16,
+            14,
+            16,
+            16,
+        )
+
+        layout.setSpacing(
+            10
+        )
+
+        header = QHBoxLayout()
+
+        header.addWidget(
+            self._card_title(
+                "Smoke Machine"
+            )
+        )
+
+        header.addStretch()
+
+        self.smoke_machine_state_label = QLabel(
+            "OFF"
+        )
+
+        set_label_role(
+            self.smoke_machine_state_label,
+            "statusOff",
+        )
+
+        header.addWidget(
+            self.smoke_machine_state_label
+        )
+
+        layout.addLayout(
+            header
+        )
+
+        row = QHBoxLayout()
+
+        label = QLabel(
+            "Manual log state"
+        )
+
+        set_label_role(
+            label,
+            "fieldLabel",
+        )
 
         self.smoke_machine_button = QPushButton(
             "OFF"
@@ -375,84 +589,113 @@ class SequenceTab(QWidget):
             True
         )
 
-        self.smoke_machine_button.setFixedWidth(
-            70
+        set_role(
+            self.smoke_machine_button,
+            "toggle",
+        )
+
+        row.addWidget(
+            label
+        )
+
+        row.addStretch()
+
+        row.addWidget(
+            self.smoke_machine_button
+        )
+
+        layout.addLayout(
+            row
         )
 
         self.smoke_machine_note = QLabel(
-            "Manual log only"
+            "Manual logging only"
         )
 
-        # ------------------------------------------------------------
-        # Layout
-        # ------------------------------------------------------------
-
-        layout.addWidget(
-            self.sensor_1_checkbox,
-            0,
-            0,
-        )
-
-        layout.addWidget(
-            self.sensor_2_checkbox,
-            0,
-            1,
-        )
-
-        layout.addWidget(
-            self.record_sequence_checkbox,
-            0,
-            2,
-        )
-
-        layout.addWidget(
-            QLabel("Smoke machine:"),
-            1,
-            0,
-        )
-
-        layout.addWidget(
-            self.smoke_machine_button,
-            1,
-            1,
-        )
-
-        layout.addWidget(
+        set_label_role(
             self.smoke_machine_note,
-            1,
-            2,
+            "muted",
         )
 
-        layout.setColumnStretch(
-            3,
-            1,
+        layout.addWidget(
+            self.smoke_machine_note
         )
 
-        return group
+        return card
 
-    # ================================================================
-    # SEQUENCE TABLE
-    # ================================================================
+    # =================================================================
+    # SEQUENCE CARD
+    # =================================================================
 
-    def _create_sequence_group(
+    def _create_sequence_card(
         self,
-    ) -> QGroupBox:
-        """
-        Create the sequence-step table.
-        """
+    ) -> QFrame:
+        """Create sequence table and editing controls."""
 
-        group = QGroupBox(
-            "Sequence steps"
+        card = self._new_card()
+
+        layout = QVBoxLayout(
+            card
         )
-
-        layout = QVBoxLayout(group)
 
         layout.setContentsMargins(
-            6,
-            6,
-            6,
-            6,
+            16,
+            14,
+            16,
+            16,
         )
+
+        layout.setSpacing(
+            10
+        )
+
+        # -------------------------------------------------------------
+        # Header
+        # -------------------------------------------------------------
+
+        header_layout = QHBoxLayout()
+
+        header_layout.addWidget(
+            self._card_title(
+                "Sequence Steps"
+            )
+        )
+
+        header_layout.addStretch()
+
+        self.total_duration_label = QLabel(
+            "0.0 s"
+        )
+
+        set_label_role(
+            self.total_duration_label,
+            "timer",
+        )
+
+        total_text = QLabel(
+            "Total duration"
+        )
+
+        set_label_role(
+            total_text,
+            "fieldLabel",
+        )
+
+        header_layout.addWidget(
+            total_text
+        )
+
+        header_layout.addWidget(
+            self.total_duration_label
+        )
+
+        layout.addLayout(
+            header_layout
+        )
+
+        # -------------------------------------------------------------
+        # Table
+        # -------------------------------------------------------------
 
         self.sequence_table = QTableWidget()
 
@@ -482,22 +725,179 @@ class SequenceTab(QWidget):
             True
         )
 
-        layout.addWidget(
-            self.sequence_table
+        self.sequence_table.setAlternatingRowColors(
+            True
         )
 
-        return group
+        self.sequence_table.setSelectionBehavior(
+            QTableWidget.SelectionBehavior.SelectRows
+        )
 
-    # ================================================================
+        self.sequence_table.setMinimumHeight(
+            210
+        )
+
+        layout.addWidget(
+            self.sequence_table,
+            stretch=1,
+        )
+
+        # -------------------------------------------------------------
+        # Editing buttons
+        # -------------------------------------------------------------
+
+        edit_layout = QHBoxLayout()
+
+        edit_layout.setSpacing(
+            8
+        )
+
+        self.add_step_button = QPushButton(
+            "+ Add Step"
+        )
+
+        set_role(
+            self.add_step_button,
+            "primary",
+        )
+
+        self.remove_step_button = QPushButton(
+            "Remove Selected"
+        )
+
+        self.clear_steps_button = QPushButton(
+            "Clear"
+        )
+
+        edit_layout.addWidget(
+            self.add_step_button
+        )
+
+        edit_layout.addWidget(
+            self.remove_step_button
+        )
+
+        edit_layout.addWidget(
+            self.clear_steps_button
+        )
+
+        edit_layout.addStretch()
+
+        layout.addLayout(
+            edit_layout
+        )
+
+        return card
+
+    # =================================================================
+    # RUN CARD
+    # =================================================================
+
+    def _create_run_card(
+        self,
+    ) -> QFrame:
+        """Create sequence status and run controls."""
+
+        card = self._new_card()
+
+        layout = QHBoxLayout(
+            card
+        )
+
+        layout.setContentsMargins(
+            16,
+            13,
+            16,
+            13,
+        )
+
+        layout.setSpacing(
+            12
+        )
+
+        # -------------------------------------------------------------
+        # Status
+        # -------------------------------------------------------------
+
+        status_layout = QVBoxLayout()
+
+        status_layout.setSpacing(
+            3
+        )
+
+        status_layout.addWidget(
+            self._card_title(
+                "Sequence"
+            )
+        )
+
+        self.sequence_status_label = QLabel(
+            "Stopped"
+        )
+
+        set_label_role(
+            self.sequence_status_label,
+            "statusOff",
+        )
+
+        status_layout.addWidget(
+            self.sequence_status_label
+        )
+
+        layout.addLayout(
+            status_layout
+        )
+
+        layout.addStretch()
+
+        # -------------------------------------------------------------
+        # Run / stop
+        # -------------------------------------------------------------
+
+        self.run_sequence_button = QPushButton(
+            "RUN SEQUENCE"
+        )
+
+        self.stop_sequence_button = QPushButton(
+            "STOP SEQUENCE"
+        )
+
+        set_role(
+            self.run_sequence_button,
+            "run",
+        )
+
+        set_role(
+            self.stop_sequence_button,
+            "stopSequence",
+        )
+
+        self.run_sequence_button.setMinimumWidth(
+            170
+        )
+
+        self.stop_sequence_button.setMinimumWidth(
+            150
+        )
+
+        layout.addWidget(
+            self.run_sequence_button
+        )
+
+        layout.addWidget(
+            self.stop_sequence_button
+        )
+
+        return card
+
+    # =================================================================
     # SIGNAL CONNECTIONS
-    # ================================================================
+    # =================================================================
 
     def _connect_signals(
         self,
     ) -> None:
-        """
-        Connect internal GUI signals.
-        """
+        """Connect internal GUI signals."""
 
         self.add_step_button.clicked.connect(
             self.add_step
@@ -523,16 +923,14 @@ class SequenceTab(QWidget):
             self._on_smoke_machine_toggled
         )
 
-    # ================================================================
+    # =================================================================
     # METADATA ACCESS
-    # ================================================================
+    # =================================================================
 
     def get_test_metadata(
         self,
     ) -> dict:
-        """
-        Return metadata entered for this sequence test.
-        """
+        """Return metadata entered for the sequence test."""
 
         return {
             "test_name":
@@ -545,55 +943,49 @@ class SequenceTab(QWidget):
                 self.comment_input.toPlainText().strip(),
         }
 
-    # ================================================================
+    # =================================================================
     # MEASUREMENT OPTIONS
-    # ================================================================
+    # =================================================================
 
     def get_sensor_1_selected(
         self,
     ) -> bool:
-        """
-        Return whether Sensor 1 should be active for the sequence.
-        """
+        """Return whether Sensor 1 should be active."""
 
-        return self.sensor_1_checkbox.isChecked()
+        return (
+            self.sensor_1_checkbox.isChecked()
+        )
 
     def get_sensor_2_selected(
         self,
     ) -> bool:
-        """
-        Return whether Sensor 2 should be active for the sequence.
-        """
+        """Return whether Sensor 2 should be active."""
 
-        return self.sensor_2_checkbox.isChecked()
+        return (
+            self.sensor_2_checkbox.isChecked()
+        )
 
     def get_record_sequence(
         self,
     ) -> bool:
-        """
-        Return whether the sequence should be recorded.
-        """
+        """Return whether sequence recording is selected."""
 
         return (
             self.record_sequence_checkbox.isChecked()
         )
 
-    # ================================================================
+    # =================================================================
     # SMOKE MACHINE
-    # ================================================================
+    # =================================================================
 
     def _on_smoke_machine_toggled(
         self,
         active: bool,
     ) -> None:
-        """
-        Update button text and emit manual smoke-machine log state.
-        """
+        """Update display and emit manual log state."""
 
-        self.smoke_machine_button.setText(
-            "ON"
-            if active
-            else "OFF"
+        self._set_smoke_machine_display(
+            active
         )
 
         self.smoke_machine_active_changed.emit(
@@ -604,9 +996,7 @@ class SequenceTab(QWidget):
         self,
         active: bool,
     ) -> None:
-        """
-        Synchronize smoke-machine GUI state without emitting a signal.
-        """
+        """Synchronize smoke-machine GUI without emitting signal."""
 
         self.smoke_machine_button.blockSignals(
             True
@@ -616,19 +1006,41 @@ class SequenceTab(QWidget):
             bool(active)
         )
 
-        self.smoke_machine_button.setText(
-            "ON"
-            if active
-            else "OFF"
+        self._set_smoke_machine_display(
+            active
         )
 
         self.smoke_machine_button.blockSignals(
             False
         )
 
-    # ================================================================
+    def _set_smoke_machine_display(
+        self,
+        active: bool,
+    ) -> None:
+
+        self.smoke_machine_button.setText(
+            "ON"
+            if active
+            else "OFF"
+        )
+
+        self.smoke_machine_state_label.setText(
+            "ON"
+            if active
+            else "OFF"
+        )
+
+        set_label_role(
+            self.smoke_machine_state_label,
+            "statusOn"
+            if active
+            else "statusOff",
+        )
+
+    # =================================================================
     # ADD STEP
-    # ================================================================
+    # =================================================================
 
     def add_step(
         self,
@@ -638,19 +1050,19 @@ class SequenceTab(QWidget):
         smoke_fan_active: bool = False,
         smoke_fan_pwm_percent: int = 0,
     ) -> None:
-        """
-        Add one sequence step to the table.
-        """
+        """Add one sequence step to the table."""
 
-        row = self.sequence_table.rowCount()
+        row = (
+            self.sequence_table.rowCount()
+        )
 
         self.sequence_table.insertRow(
             row
         )
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Duration
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         duration_spin = QDoubleSpinBox()
 
@@ -681,9 +1093,9 @@ class SequenceTab(QWidget):
             duration_spin,
         )
 
-        # ------------------------------------------------------------
-        # Main fan state
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # Main fan
+        # -------------------------------------------------------------
 
         main_fan_combo = (
             self._create_on_off_combo()
@@ -700,9 +1112,9 @@ class SequenceTab(QWidget):
             main_fan_combo,
         )
 
-        # ------------------------------------------------------------
-        # Main fan PWM
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # Main PWM
+        # -------------------------------------------------------------
 
         main_pwm_combo = (
             self._create_pwm_combo()
@@ -719,9 +1131,9 @@ class SequenceTab(QWidget):
             main_pwm_combo,
         )
 
-        # ------------------------------------------------------------
-        # Smoke fan state
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # Smoke fan
+        # -------------------------------------------------------------
 
         smoke_fan_combo = (
             self._create_on_off_combo()
@@ -738,9 +1150,9 @@ class SequenceTab(QWidget):
             smoke_fan_combo,
         )
 
-        # ------------------------------------------------------------
-        # Smoke fan PWM
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # Smoke PWM
+        # -------------------------------------------------------------
 
         smoke_pwm_combo = (
             self._create_pwm_combo()
@@ -760,16 +1172,14 @@ class SequenceTab(QWidget):
         self._refresh_step_numbers()
         self._update_total_duration()
 
-    # ================================================================
+    # =================================================================
     # REMOVE STEP
-    # ================================================================
+    # =================================================================
 
     def remove_selected_step(
         self,
     ) -> None:
-        """
-        Remove the selected sequence step.
-        """
+        """Remove selected sequence step."""
 
         row = (
             self.sequence_table.currentRow()
@@ -785,16 +1195,14 @@ class SequenceTab(QWidget):
         self._refresh_step_numbers()
         self._update_total_duration()
 
-    # ================================================================
-    # CLEAR SEQUENCE
-    # ================================================================
+    # =================================================================
+    # CLEAR STEPS
+    # =================================================================
 
     def clear_steps(
         self,
     ) -> None:
-        """
-        Remove all sequence steps.
-        """
+        """Remove all sequence steps."""
 
         self.sequence_table.setRowCount(
             0
@@ -802,24 +1210,18 @@ class SequenceTab(QWidget):
 
         self._update_total_duration()
 
-    # ================================================================
+    # =================================================================
     # RUN SEQUENCE
-    # ================================================================
+    # =================================================================
 
     def _on_run_sequence(
         self,
     ) -> None:
-        """
-        Gather all sequence steps and request sequence execution.
+        """Gather sequence and request execution."""
 
-        MainWindow handles:
-            - Metadata
-            - Sensor states
-            - Recording
-            - Sequence execution
-        """
-
-        steps = self.get_sequence_data()
+        steps = (
+            self.get_sequence_data()
+        )
 
         if not steps:
             return
@@ -828,16 +1230,14 @@ class SequenceTab(QWidget):
             steps
         )
 
-    # ================================================================
+    # =================================================================
     # GET SEQUENCE DATA
-    # ================================================================
+    # =================================================================
 
     def get_sequence_data(
         self,
     ) -> list[dict]:
-        """
-        Return the complete sequence as a list of dictionaries.
-        """
+        """Return complete sequence as list of dictionaries."""
 
         steps = []
 
@@ -913,16 +1313,14 @@ class SequenceTab(QWidget):
 
         return steps
 
-    # ================================================================
-    # ON / OFF COMBO
-    # ================================================================
+    # =================================================================
+    # COMBO CREATION
+    # =================================================================
 
     @staticmethod
     def _create_on_off_combo(
     ) -> QComboBox:
-        """
-        Create an ON/OFF combo box.
-        """
+        """Create ON/OFF combo."""
 
         combo = QComboBox()
 
@@ -938,16 +1336,10 @@ class SequenceTab(QWidget):
 
         return combo
 
-    # ================================================================
-    # PWM COMBO
-    # ================================================================
-
     @staticmethod
     def _create_pwm_combo(
     ) -> QComboBox:
-        """
-        Create PWM selection using config.PWM_LEVELS.
-        """
+        """Create PWM selector using config.PWM_LEVELS."""
 
         combo = QComboBox()
 
@@ -960,24 +1352,24 @@ class SequenceTab(QWidget):
 
         return combo
 
-    # ================================================================
+    # =================================================================
     # COMBO HELPERS
-    # ================================================================
+    # =================================================================
 
     @staticmethod
     def _set_combo_value(
         combo: QComboBox,
         value,
     ) -> None:
-        """
-        Select combo item matching supplied data value.
-        """
 
-        index = combo.findData(
-            value
+        index = (
+            combo.findData(
+                value
+            )
         )
 
         if index >= 0:
+
             combo.setCurrentIndex(
                 index
             )
@@ -987,29 +1379,27 @@ class SequenceTab(QWidget):
         combo: QComboBox,
         value: bool,
     ) -> None:
-        """
-        Select ON or OFF in a Boolean combo box.
-        """
 
-        index = combo.findData(
-            bool(value)
+        index = (
+            combo.findData(
+                bool(value)
+            )
         )
 
         if index >= 0:
+
             combo.setCurrentIndex(
                 index
             )
 
-    # ================================================================
+    # =================================================================
     # STEP NUMBERS
-    # ================================================================
+    # =================================================================
 
     def _refresh_step_numbers(
         self,
     ) -> None:
-        """
-        Update vertical row headers.
-        """
+        """Update vertical table row headers."""
 
         for row in range(
             self.sequence_table.rowCount()
@@ -1022,16 +1412,14 @@ class SequenceTab(QWidget):
                 ),
             )
 
-    # ================================================================
+    # =================================================================
     # TOTAL DURATION
-    # ================================================================
+    # =================================================================
 
     def _update_total_duration(
         self,
     ) -> None:
-        """
-        Calculate and display total sequence duration.
-        """
+        """Calculate and display total sequence duration."""
 
         total_duration = 0.0
 
@@ -1056,30 +1444,44 @@ class SequenceTab(QWidget):
             f"{total_duration:.1f} s"
         )
 
-    # ================================================================
+    # =================================================================
     # RUNNING STATE
-    # ================================================================
+    # =================================================================
 
     def set_sequence_running(
         self,
         running: bool,
     ) -> None:
         """
-        Lock sequence configuration while a sequence is running.
+        Lock sequence configuration while running.
 
-        The smoke-machine button remains available because it is
-        manual logging and is not physically controlled by the sequence.
+        Smoke-machine logging deliberately remains available.
         """
 
+        self._sequence_running = bool(
+            running
+        )
+
+        # -------------------------------------------------------------
+        # Status display
+        # -------------------------------------------------------------
+
         self.sequence_status_label.setText(
-            "Running"
+            "● RUNNING"
             if running
             else "Stopped"
         )
 
-        # ------------------------------------------------------------
+        set_label_role(
+            self.sequence_status_label,
+            "statusOn"
+            if running
+            else "statusOff",
+        )
+
+        # -------------------------------------------------------------
         # Run / stop
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.run_sequence_button.setEnabled(
             not running
@@ -1089,9 +1491,9 @@ class SequenceTab(QWidget):
             running
         )
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Sequence editor
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.add_step_button.setEnabled(
             not running
@@ -1109,9 +1511,9 @@ class SequenceTab(QWidget):
             not running
         )
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Test configuration
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.test_name_input.setEnabled(
             not running
@@ -1137,7 +1539,10 @@ class SequenceTab(QWidget):
             not running
         )
 
-        # Smoke-machine logging intentionally remains enabled.
+        # -------------------------------------------------------------
+        # Manual smoke-machine log remains available
+        # -------------------------------------------------------------
+
         self.smoke_machine_button.setEnabled(
             True
         )

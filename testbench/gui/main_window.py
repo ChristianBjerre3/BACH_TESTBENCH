@@ -3,7 +3,7 @@ gui/main_window.py
 
 Main application window for the airflow/smoke test bench.
 
-MainWindow is the central coordinator between:
+MainWindow coordinates:
 
 GUI
     - ControlTab
@@ -23,16 +23,17 @@ Services
     - DataLogger
     - SequenceController
 
-MainWindow owns the higher-level workflow, including:
+MainWindow owns:
     - Manual recording
     - Sequence-owned recording
     - Recording ownership
     - Sequence completion handling
     - Event logging
-    - STOP ALL semantics
+    - STOP ALL behavior
     - Sensor selection for sequences
     - Smoke-machine state synchronization
-    - Live plot timebase
+    - Independent live-plot timebase
+    - Sequence-step graph markers
 """
 
 from __future__ import annotations
@@ -46,6 +47,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QWidget,
     QHBoxLayout,
+    QVBoxLayout,
     QSplitter,
 )
 
@@ -63,23 +65,29 @@ from gui.live_tab import LiveTab
 from gui.sequence_tab import SequenceTab
 from gui.live_status_panel import LiveStatusPanel
 
+from gui.styles import (
+    APP_STYLESHEET,
+    CARD_SPACING,
+)
 
-# ====================================================================
+
+# =====================================================================
 # HARDWARE BACKEND
-# ====================================================================
+# =====================================================================
 
 
 def _load_hardware_backend():
     """
-    Import the correct hardware backend.
+    Import real or simulated hardware backend.
 
     Raspberry Pi libraries are only imported in real mode.
-    This allows the complete GUI to run on Windows in simulation mode.
+    This allows the complete GUI to run on Windows.
     """
 
     mode = config.HARDWARE_MODE
 
     if mode not in config.VALID_HARDWARE_MODES:
+
         raise ValueError(
             f"Invalid HARDWARE_MODE={mode!r}. "
             f"Allowed values: {config.VALID_HARDWARE_MODES}."
@@ -107,22 +115,26 @@ def _load_hardware_backend():
     )
 
 
-# ====================================================================
+# =====================================================================
 # MAIN WINDOW
-# ====================================================================
+# =====================================================================
 
 
 class MainWindow(QMainWindow):
     """Main test-bench application window."""
+
+    # =================================================================
+    # INITIALIZATION
+    # =================================================================
 
     def __init__(self) -> None:
         """Initialize complete application."""
 
         super().__init__()
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Window
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         mode_label = (
             "SIMULATION"
@@ -137,49 +149,57 @@ class MainWindow(QMainWindow):
         )
 
         self.resize(
-            1100,
-            800,
+            1400,
+            900,
+        )
+
+        # Apply central dark dashboard stylesheet.
+        self.setStyleSheet(
+            APP_STYLESHEET
         )
 
         self._cleanup_done = False
 
-        # ------------------------------------------------------------
-        # Live graph timebase
+        # -------------------------------------------------------------
+        # Independent live graph timebase
         #
-        # This is deliberately independent of recording time.
-        # ------------------------------------------------------------
+        # This is NOT recording elapsed time.
+        # -------------------------------------------------------------
 
         self._live_start_monotonic = (
             time.monotonic()
         )
 
-        # ------------------------------------------------------------
+        # Used for sequence-step graph markers.
+        self._last_sequence_step = None
+
+        # -------------------------------------------------------------
         # Recording ownership
         #
         # False:
         #     no recording, or recording started manually.
         #
         # True:
-        #     recording was automatically started by a sequence.
-        # ------------------------------------------------------------
+        #     recording automatically started by sequence.
+        # -------------------------------------------------------------
 
         self._recording_started_by_sequence = False
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Application state
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.session = TestSession()
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Hardware / simulation
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self._initialize_hardware()
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Services
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.logger = DataLogger(
             session=self.session
@@ -191,33 +211,31 @@ class MainWindow(QMainWindow):
             session=self.session,
         )
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Event-state snapshot
-        #
-        # Used to detect fan/sensor/smoke state changes consistently,
-        # including changes caused automatically by sequence steps.
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self._last_event_state = (
             self._get_event_state_snapshot()
         )
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # GUI
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self._build_ui()
+
         self._connect_signals()
 
-        # ------------------------------------------------------------
-        # Timer
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # Main update timer
+        # -------------------------------------------------------------
 
         self._create_update_timer()
 
-        # ------------------------------------------------------------
-        # Initial GUI synchronization
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # Initial display synchronization
+        # -------------------------------------------------------------
 
         self._update_gui()
 
@@ -225,7 +243,9 @@ class MainWindow(QMainWindow):
     # HARDWARE INITIALIZATION
     # =================================================================
 
-    def _initialize_hardware(self) -> None:
+    def _initialize_hardware(
+        self,
+    ) -> None:
         """Initialize real or simulated hardware."""
 
         (
@@ -235,9 +255,9 @@ class MainWindow(QMainWindow):
             OpticalSensor,
         ) = _load_hardware_backend()
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Fans
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.main_fan = FanController(
             gpio_pin=config.MAIN_FAN_PWM_GPIO,
@@ -249,15 +269,15 @@ class MainWindow(QMainWindow):
             name="Smoke Fan",
         )
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # ADC
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.adc = ADCController()
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # LEDs
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.sensor_1_led = LEDController(
             gpio_pin=config.SENSOR_1_LED_GPIO,
@@ -269,9 +289,9 @@ class MainWindow(QMainWindow):
             name="Sensor 2 LED",
         )
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Optical sensors
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.sensor_1 = OpticalSensor(
             adc=self.adc,
@@ -291,48 +311,70 @@ class MainWindow(QMainWindow):
     # GUI
     # =================================================================
 
-    def _build_ui(self) -> None:
-        """Build main tab interface."""
+    def _build_ui(
+        self,
+    ) -> None:
+        """Build main three-tab interface."""
 
         self.tabs = QTabWidget()
 
+        # -------------------------------------------------------------
+        # Main tab widgets
+        # -------------------------------------------------------------
+
         self.control_tab = ControlTab()
+
         self.live_tab = LiveTab()
+
         self.sequence_tab = SequenceTab()
 
+        # -------------------------------------------------------------
+        # Compact right-side panels
+        # -------------------------------------------------------------
+
         self.control_live_panel = LiveStatusPanel()
+
         self.sequence_live_panel = LiveStatusPanel()
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # CONTROL
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+
+        control_page = (
+            self._wrap_with_live_panel(
+                left_widget=self.control_tab,
+                live_panel=self.control_live_panel,
+                bottom_widget=self.control_tab.stop_all_button,
+            )
+        )
 
         self.tabs.addTab(
-            self._wrap_with_live_panel(
-                self.control_tab,
-                self.control_live_panel,
-            ),
+            control_page,
             "CONTROL",
         )
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # LIVE DATA
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.tabs.addTab(
             self.live_tab,
             "LIVE DATA",
         )
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # SEQUENCE
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+
+        sequence_page = (
+            self._wrap_with_live_panel(
+                left_widget=self.sequence_tab,
+                live_panel=self.sequence_live_panel,
+            )
+        )
 
         self.tabs.addTab(
-            self._wrap_with_live_panel(
-                self.sequence_tab,
-                self.sequence_live_panel,
-            ),
+            sequence_page,
             "SEQUENCE",
         )
 
@@ -340,27 +382,40 @@ class MainWindow(QMainWindow):
             self.tabs
         )
 
+    # =================================================================
+    # TAB WRAPPER
+    # =================================================================
+
     @staticmethod
     def _wrap_with_live_panel(
         left_widget: QWidget,
         live_panel: LiveStatusPanel,
+        bottom_widget: QWidget | None = None,
     ) -> QWidget:
-        """Place primary tab beside compact live panel."""
+        """
+        Place main tab content beside compact live panel.
+
+        CONTROL supplies STOP ALL as bottom_widget.
+
+        That moves the existing ControlTab STOP ALL button visually
+        below the Live Status / Live Data column without changing
+        its signal or functionality.
+        """
 
         container = QWidget()
 
-        layout = QHBoxLayout(
+        outer_layout = QHBoxLayout(
             container
         )
 
-        layout.setContentsMargins(
+        outer_layout.setContentsMargins(
             0,
             0,
             0,
             0,
         )
 
-        layout.setSpacing(
+        outer_layout.setSpacing(
             0
         )
 
@@ -368,13 +423,69 @@ class MainWindow(QMainWindow):
             Qt.Orientation.Horizontal
         )
 
+        # -------------------------------------------------------------
+        # Left side
+        # -------------------------------------------------------------
+
         splitter.addWidget(
             left_widget
         )
 
-        splitter.addWidget(
-            live_panel
+        # -------------------------------------------------------------
+        # Right side
+        # -------------------------------------------------------------
+
+        right_container = QWidget()
+
+        right_layout = QVBoxLayout(
+            right_container
         )
+
+        right_layout.setContentsMargins(
+            CARD_SPACING,
+            CARD_SPACING,
+            CARD_SPACING,
+            CARD_SPACING,
+        )
+
+        right_layout.setSpacing(
+            CARD_SPACING
+        )
+
+        right_layout.addWidget(
+            live_panel,
+            stretch=1,
+        )
+
+        # -------------------------------------------------------------
+        # Optional bottom control
+        #
+        # Used for CONTROL's STOP ALL button.
+        # -------------------------------------------------------------
+
+        if bottom_widget is not None:
+
+            left_layout = (
+                left_widget.layout()
+            )
+
+            if left_layout is not None:
+
+                left_layout.removeWidget(
+                    bottom_widget
+                )
+
+            right_layout.addWidget(
+                bottom_widget
+            )
+
+        splitter.addWidget(
+            right_container
+        )
+
+        # -------------------------------------------------------------
+        # Relative size
+        # -------------------------------------------------------------
 
         splitter.setStretchFactor(
             0,
@@ -390,7 +501,7 @@ class MainWindow(QMainWindow):
             False
         )
 
-        layout.addWidget(
+        outer_layout.addWidget(
             splitter
         )
 
@@ -400,12 +511,14 @@ class MainWindow(QMainWindow):
     # SIGNALS
     # =================================================================
 
-    def _connect_signals(self) -> None:
+    def _connect_signals(
+        self,
+    ) -> None:
         """Connect GUI signals to MainWindow handlers."""
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Main fan
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.control_tab.main_fan_active_changed.connect(
             self._set_main_fan_active
@@ -415,9 +528,9 @@ class MainWindow(QMainWindow):
             self._set_main_fan_pwm
         )
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Smoke fan
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.control_tab.smoke_fan_active_changed.connect(
             self._set_smoke_fan_active
@@ -427,9 +540,9 @@ class MainWindow(QMainWindow):
             self._set_smoke_fan_pwm
         )
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Sensors
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.control_tab.sensor_1_active_changed.connect(
             self._set_sensor_1_active
@@ -439,11 +552,11 @@ class MainWindow(QMainWindow):
             self._set_sensor_2_active
         )
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Smoke machine
         #
-        # CONTROL and SEQUENCE control the same logical state.
-        # ------------------------------------------------------------
+        # CONTROL and SEQUENCE represent same logical state.
+        # -------------------------------------------------------------
 
         self.control_tab.smoke_machine_active_changed.connect(
             self._set_smoke_machine_active
@@ -453,9 +566,9 @@ class MainWindow(QMainWindow):
             self._set_smoke_machine_active
         )
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Manual recording
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.control_tab.start_recording_requested.connect(
             self._start_recording
@@ -465,17 +578,17 @@ class MainWindow(QMainWindow):
             self._stop_recording
         )
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # STOP ALL
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.control_tab.stop_all_requested.connect(
             self._stop_all
         )
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Sequence
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.sequence_tab.run_sequence_requested.connect(
             self._start_sequence
@@ -489,8 +602,10 @@ class MainWindow(QMainWindow):
     # TIMER
     # =================================================================
 
-    def _create_update_timer(self) -> None:
-        """Create central 10 Hz application timer."""
+    def _create_update_timer(
+        self,
+    ) -> None:
+        """Create central sensor/application timer."""
 
         interval_ms = max(
             1,
@@ -518,26 +633,30 @@ class MainWindow(QMainWindow):
     # CENTRAL UPDATE LOOP
     # =================================================================
 
-    def _update_loop(self) -> None:
+    def _update_loop(
+        self,
+    ) -> None:
         """
         Central periodic update.
 
-        Order is important:
+        Order:
 
             1. Update sequence
-            2. Detect automatic sequence completion
-            3. Detect sequence-driven state changes
-            4. Read sensors once
-            5. Log one time-series sample
-            6. Update GUI
-            7. Update all plots from the same sensor sample
+            2. Detect sequence-step change
+            3. Log sequence-driven state changes
+            4. Detect sequence completion
+            5. Read sensors exactly once
+            6. Store sensor values
+            7. Log one time-series sample if recording
+            8. Update GUI
+            9. Update all graphs
         """
 
         try:
 
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
             # Sequence update
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
 
             sequence_was_running = (
                 self.sequence.is_running()
@@ -549,22 +668,56 @@ class MainWindow(QMainWindow):
                 self.sequence.is_running()
             )
 
-            # Sequence steps can change fan state directly.
+            # ---------------------------------------------------------
+            # Detect sequence step transitions
+            # ---------------------------------------------------------
+
+            if sequence_is_running:
+
+                current_step = (
+                    self.sequence.get_current_step_number()
+                )
+
+                if (
+                    current_step is not None
+                    and current_step
+                    != self._last_sequence_step
+                ):
+
+                    marker_time_s = (
+                        time.monotonic()
+                        - self._live_start_monotonic
+                    )
+
+                    self.live_tab.add_sequence_step_marker(
+                        live_time_s=marker_time_s,
+                        step_number=current_step,
+                    )
+
+                    self._last_sequence_step = (
+                        current_step
+                    )
+
+            # ---------------------------------------------------------
+            # Sequence can directly change fan state.
+            # ---------------------------------------------------------
+
             self._log_state_change_events()
 
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
             # Normal sequence completion
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
 
             if (
                 sequence_was_running
                 and not sequence_is_running
             ):
+
                 self._handle_sequence_completed()
 
-            # --------------------------------------------------------
-            # Read sensors exactly once
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
+            # Read both sensors exactly once
+            # ---------------------------------------------------------
 
             sensor_1_voltage = (
                 self.sensor_1.read_voltage()
@@ -574,9 +727,9 @@ class MainWindow(QMainWindow):
                 self.sensor_2.read_voltage()
             )
 
-            # --------------------------------------------------------
-            # Store latest measurements
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
+            # Store latest sensor measurements
+            # ---------------------------------------------------------
 
             self.session.set_sensor_1_voltage(
                 sensor_1_voltage
@@ -586,44 +739,44 @@ class MainWindow(QMainWindow):
                 sensor_2_voltage
             )
 
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
             # Time-series recording
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
 
             if self.logger.is_recording():
 
                 self.logger.log_sample()
 
-            # --------------------------------------------------------
-            # GUI state
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
+            # Update labels/status
+            # ---------------------------------------------------------
 
             self._update_gui()
 
-            # --------------------------------------------------------
-            # Independent live-plot time
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
+            # Independent GUI graph time
+            # ---------------------------------------------------------
 
             live_time_s = (
                 time.monotonic()
                 - self._live_start_monotonic
             )
 
-            # Existing LiveTab currently names this argument
-            # elapsed_time_s, but we deliberately supply LIVE time.
+            # Main LIVE DATA graph
             self.live_tab.add_plot_sample(
-                elapsed_time_s=live_time_s,
+                live_time_s=live_time_s,
                 sensor_1_voltage=sensor_1_voltage,
                 sensor_2_voltage=sensor_2_voltage,
             )
 
-            # New side panels explicitly call it live_time_s.
+            # CONTROL side graph
             self.control_live_panel.add_plot_sample(
                 live_time_s=live_time_s,
                 sensor_1_voltage=sensor_1_voltage,
                 sensor_2_voltage=sensor_2_voltage,
             )
 
+            # SEQUENCE side graph
             self.sequence_live_panel.add_plot_sample(
                 live_time_s=live_time_s,
                 sensor_1_voltage=sensor_1_voltage,
@@ -652,8 +805,11 @@ class MainWindow(QMainWindow):
         try:
 
             if active:
+
                 self.main_fan.on()
+
             else:
+
                 self.main_fan.off()
 
             state = (
@@ -666,6 +822,7 @@ class MainWindow(QMainWindow):
             )
 
             self._log_state_change_events()
+
             self._update_gui()
 
         except Exception as exc:
@@ -699,6 +856,7 @@ class MainWindow(QMainWindow):
             )
 
             self._log_state_change_events()
+
             self._update_gui()
 
         except Exception as exc:
@@ -723,8 +881,11 @@ class MainWindow(QMainWindow):
         try:
 
             if active:
+
                 self.smoke_fan.on()
+
             else:
+
                 self.smoke_fan.off()
 
             state = (
@@ -737,6 +898,7 @@ class MainWindow(QMainWindow):
             )
 
             self._log_state_change_events()
+
             self._update_gui()
 
         except Exception as exc:
@@ -770,6 +932,7 @@ class MainWindow(QMainWindow):
             )
 
             self._log_state_change_events()
+
             self._update_gui()
 
         except Exception as exc:
@@ -786,7 +949,7 @@ class MainWindow(QMainWindow):
         self,
         active: bool,
     ) -> None:
-        """Enable/disable Sensor 1 and its LED."""
+        """Enable or disable Sensor 1 and its LED."""
 
         if self.sequence.is_running():
             return
@@ -802,6 +965,7 @@ class MainWindow(QMainWindow):
             )
 
             self._log_state_change_events()
+
             self._update_gui()
 
         except Exception as exc:
@@ -818,7 +982,7 @@ class MainWindow(QMainWindow):
         self,
         active: bool,
     ) -> None:
-        """Enable/disable Sensor 2 and its LED."""
+        """Enable or disable Sensor 2 and its LED."""
 
         if self.sequence.is_running():
             return
@@ -834,6 +998,7 @@ class MainWindow(QMainWindow):
             )
 
             self._log_state_change_events()
+
             self._update_gui()
 
         except Exception as exc:
@@ -851,9 +1016,9 @@ class MainWindow(QMainWindow):
         active: bool,
     ) -> None:
         """
-        Update manual smoke-machine log state.
+        Update manually logged smoke-machine state.
 
-        This is intentionally allowed during a sequence.
+        This remains allowed while a sequence is running.
         """
 
         self.session.set_smoke_machine_active(
@@ -861,14 +1026,17 @@ class MainWindow(QMainWindow):
         )
 
         self._log_state_change_events()
+
         self._update_gui()
 
     # =================================================================
     # MANUAL RECORDING
     # =================================================================
 
-    def _start_recording(self) -> None:
-        """Start recording from CONTROL."""
+    def _start_recording(
+        self,
+    ) -> None:
+        """Start manual recording from CONTROL."""
 
         if self.sequence.is_running():
             return
@@ -881,27 +1049,40 @@ class MainWindow(QMainWindow):
         )
 
         self.session.set_metadata(
-            test_name=metadata["test_name"],
-            mount_name=metadata["mount_name"],
-            comment=metadata["comment"],
+            test_name=metadata[
+                "test_name"
+            ],
+            mount_name=metadata[
+                "mount_name"
+            ],
+            comment=metadata[
+                "comment"
+            ],
         )
 
         try:
 
             self.logger.start()
 
-            # This recording belongs to CONTROL/manual workflow.
+            # Manual recording ownership.
             self._recording_started_by_sequence = False
 
-            # Synchronize event baseline AFTER recording starts.
-            #
-            # This prevents old state changes from before the recording
-            # being written as new events.
+            # Update baseline after recording begins so old changes
+            # are not falsely logged as new events.
             self._last_event_state = (
                 self._get_event_state_snapshot()
             )
 
-            self._clear_all_plots()
+            # ---------------------------------------------------------
+            # IMPORTANT:
+            #
+            # Starting a new recording starts a fresh visual graph
+            # timeline at 0 s.
+            #
+            # This does NOT affect CSV elapsed time or logger timing.
+            # ---------------------------------------------------------
+
+            self._reset_live_plots()
 
             self.control_tab.set_recording_state(
                 True
@@ -918,7 +1099,9 @@ class MainWindow(QMainWindow):
                 exc,
             )
 
-    def _stop_recording(self) -> None:
+    def _stop_recording(
+        self,
+    ) -> None:
         """Stop manual recording."""
 
         if self.sequence.is_running():
@@ -929,10 +1112,8 @@ class MainWindow(QMainWindow):
 
         try:
 
-            # A manual Stop Recording button should only normally be
-            # available for a manual recording.
-            #
-            # Guard against accidentally stopping sequence-owned data.
+            # Prevent manual button accidentally stopping
+            # a sequence-owned recording.
             if self._recording_started_by_sequence:
                 return
 
@@ -971,16 +1152,18 @@ class MainWindow(QMainWindow):
 
         Workflow:
 
-            1. Read sequence options
-            2. Reject recorded sequence if another recording is active
-            3. Build/validate sequence steps
-            4. Apply selected sensor states
-            5. Start recording if requested
-            6. Start sequence
-            7. Lock manual controls
+            1. Read options
+            2. Check recording conflict
+            3. Build sequence steps
+            4. Apply selected sensors
+            5. Start sequence recording if selected
+            6. Reset visual graph time to 0
+            7. Start sequence
+            8. Add Step 1 graph marker
+            9. Lock controls
 
-        An unrecorded sequence is allowed while a manual recording is
-        already active. That manual recording remains manual-owned.
+        An unrecorded sequence may run while a manual recording is
+        active. The manual recording continues unchanged.
         """
 
         if self.sequence.is_running():
@@ -990,9 +1173,9 @@ class MainWindow(QMainWindow):
             self.sequence_tab.get_record_sequence()
         )
 
-        # ------------------------------------------------------------
-        # Recording conflict
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # Recorded sequence cannot start if another recording exists.
+        # -------------------------------------------------------------
 
         if (
             record_sequence
@@ -1005,7 +1188,8 @@ class MainWindow(QMainWindow):
                 (
                     "A recording is already active.\n\n"
                     "Stop the current manual recording before "
-                    "starting a sequence with 'Record sequence' enabled."
+                    "starting a sequence with "
+                    "'Record sequence' enabled."
                 ),
             )
 
@@ -1013,36 +1197,35 @@ class MainWindow(QMainWindow):
 
         try:
 
-            # --------------------------------------------------------
-            # Convert GUI rows
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
+            # Convert GUI table rows to SequenceStep objects
+            # ---------------------------------------------------------
 
             steps = [
+
                 SequenceStep(
                     duration_s=step[
                         "duration_s"
                     ],
-
                     main_fan_active=step[
                         "main_fan_active"
                     ],
-
                     main_fan_pwm_percent=step[
                         "main_fan_pwm_percent"
                     ],
-
                     smoke_fan_active=step[
                         "smoke_fan_active"
                     ],
-
                     smoke_fan_pwm_percent=step[
                         "smoke_fan_pwm_percent"
                     ],
                 )
+
                 for step in step_data
             ]
 
             if not steps:
+
                 raise ValueError(
                     "The sequence contains no steps."
                 )
@@ -1051,9 +1234,9 @@ class MainWindow(QMainWindow):
                 steps
             )
 
-            # --------------------------------------------------------
-            # Sequence-selected sensors are authoritative at Run.
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
+            # Apply sequence sensor selection
+            # ---------------------------------------------------------
 
             sensor_1_selected = (
                 self.sequence_tab.get_sensor_1_selected()
@@ -1079,14 +1262,12 @@ class MainWindow(QMainWindow):
                 sensor_2_selected
             )
 
-            # Sensor changes happened before sequence-owned recording
-            # by design. Update event baseline so they are not falsely
-            # logged later.
+            # Synchronize state changes.
             self._log_state_change_events()
 
-            # --------------------------------------------------------
-            # Automatic sequence recording
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
+            # Optional sequence-owned recording
+            # ---------------------------------------------------------
 
             if record_sequence:
 
@@ -1095,9 +1276,15 @@ class MainWindow(QMainWindow):
                 )
 
                 self.session.set_metadata(
-                    test_name=metadata["test_name"],
-                    mount_name=metadata["mount_name"],
-                    comment=metadata["comment"],
+                    test_name=metadata[
+                        "test_name"
+                    ],
+                    mount_name=metadata[
+                        "mount_name"
+                    ],
+                    comment=metadata[
+                        "comment"
+                    ],
                 )
 
                 self.logger.start()
@@ -1108,17 +1295,52 @@ class MainWindow(QMainWindow):
                     self._get_event_state_snapshot()
                 )
 
-                self._clear_all_plots()
+            # ---------------------------------------------------------
+            # IMPORTANT:
+            #
+            # EVERY sequence resets the visual graph timeline.
+            #
+            # This happens even when:
+            #     Record sequence = unchecked
+            #
+            # and even if a manual recording is already active.
+            #
+            # Only GUI live time changes.
+            # ---------------------------------------------------------
 
-            # --------------------------------------------------------
+            self._reset_live_plots()
+
+            # ---------------------------------------------------------
             # Start sequence
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
 
             self.sequence.start()
 
-            # Sequence.start() applies Step 1 immediately.
-            # Capture fan changes caused by Step 1.
+            # Sequence.start() immediately applies Step 1.
             self._log_state_change_events()
+
+            # ---------------------------------------------------------
+            # Add Step 1 marker at exact graph origin
+            # ---------------------------------------------------------
+
+            current_step = (
+                self.sequence.get_current_step_number()
+            )
+
+            if current_step is not None:
+
+                self.live_tab.add_sequence_step_marker(
+                    live_time_s=0.0,
+                    step_number=current_step,
+                )
+
+                self._last_sequence_step = (
+                    current_step
+                )
+
+            # ---------------------------------------------------------
+            # Sequence-start event
+            # ---------------------------------------------------------
 
             if self.logger.is_recording():
 
@@ -1139,9 +1361,9 @@ class MainWindow(QMainWindow):
                     },
                 )
 
-            # --------------------------------------------------------
-            # Lock UI
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
+            # Lock interfaces
+            # ---------------------------------------------------------
 
             self.control_tab.set_sequence_running(
                 True
@@ -1155,10 +1377,9 @@ class MainWindow(QMainWindow):
 
         except Exception as exc:
 
-            # --------------------------------------------------------
-            # Roll back a sequence-owned recording if sequence startup
-            # fails after logger.start().
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
+            # Roll back sequence-owned recording if startup failed.
+            # ---------------------------------------------------------
 
             if (
                 self._recording_started_by_sequence
@@ -1166,6 +1387,7 @@ class MainWindow(QMainWindow):
             ):
 
                 try:
+
                     self.logger.log_event(
                         "sequence_start_failed",
                         str(exc),
@@ -1174,14 +1396,21 @@ class MainWindow(QMainWindow):
                     self.logger.stop()
 
                 except Exception:
+
                     pass
 
             self._recording_started_by_sequence = False
 
-            # Ensure sequence/fans are safe if startup partially failed.
+            # ---------------------------------------------------------
+            # Attempt safe sequence stop
+            # ---------------------------------------------------------
+
             try:
+
                 self.sequence.stop()
+
             except Exception:
+
                 pass
 
             self.control_tab.set_sequence_running(
@@ -1203,8 +1432,10 @@ class MainWindow(QMainWindow):
     # MANUAL SEQUENCE STOP
     # =================================================================
 
-    def _stop_sequence(self) -> None:
-        """Stop sequence from the SEQUENCE tab."""
+    def _stop_sequence(
+        self,
+    ) -> None:
+        """Stop sequence from SEQUENCE tab."""
 
         if not self.sequence.is_running():
             return
@@ -1213,8 +1444,7 @@ class MainWindow(QMainWindow):
 
             self.sequence.stop()
 
-            # Capture automatic fan OFF / PWM 0 changes while the
-            # sequence recording is still open.
+            # Capture fan OFF / PWM 0 while logger is still open.
             self._log_state_change_events()
 
             if self.logger.is_recording():
@@ -1224,9 +1454,9 @@ class MainWindow(QMainWindow):
                     "manual",
                 )
 
-            # --------------------------------------------------------
-            # Stop recording only if the sequence owns it.
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
+            # Stop recording only when sequence owns it.
+            # ---------------------------------------------------------
 
             if (
                 self._recording_started_by_sequence
@@ -1261,7 +1491,7 @@ class MainWindow(QMainWindow):
         self,
     ) -> None:
         """
-        Handle transition from running sequence to normal completion.
+        Handle normal sequence completion.
 
         SequenceController has already:
             - stopped both fans
@@ -1269,7 +1499,10 @@ class MainWindow(QMainWindow):
             - marked sequence_running False
         """
 
-        # Capture fan stop caused by normal completion.
+        # -------------------------------------------------------------
+        # Capture automatic final fan state
+        # -------------------------------------------------------------
+
         self._log_state_change_events()
 
         if self.logger.is_recording():
@@ -1278,12 +1511,11 @@ class MainWindow(QMainWindow):
                 "sequence_completed"
             )
 
-        # ------------------------------------------------------------
-        # Stop only sequence-owned recording.
+        # -------------------------------------------------------------
+        # Only sequence-owned recording stops.
         #
-        # If an unrecorded sequence was running during a manual
-        # recording, that manual recording must continue.
-        # ------------------------------------------------------------
+        # Manual recording continues after an unrecorded sequence.
+        # -------------------------------------------------------------
 
         if (
             self._recording_started_by_sequence
@@ -1308,7 +1540,9 @@ class MainWindow(QMainWindow):
     # STOP ALL
     # =================================================================
 
-    def _stop_all(self) -> None:
+    def _stop_all(
+        self,
+    ) -> None:
         """
         STOP ALL safety action.
 
@@ -1317,11 +1551,11 @@ class MainWindow(QMainWindow):
             - Main PWM -> 0 %
             - Stop Smoke Fan
             - Smoke PWM -> 0 %
-            - Stop running sequence
+            - Stop sequence
 
         Never:
             - Disable sensors
-            - Change smoke-machine logged state
+            - Change smoke-machine state
 
         Recording:
             - Manual recording continues
@@ -1339,9 +1573,9 @@ class MainWindow(QMainWindow):
                 and self.logger.is_recording()
             )
 
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
             # Stop sequence / fans
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
 
             if sequence_was_running:
 
@@ -1350,19 +1584,21 @@ class MainWindow(QMainWindow):
             else:
 
                 self.main_fan.stop()
+
                 self.smoke_fan.stop()
 
+            # Update session to matching STOP ALL state.
             self.session.apply_stop_all_state()
 
-            # --------------------------------------------------------
-            # Log resulting fan state changes
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
+            # Log resulting fan changes
+            # ---------------------------------------------------------
 
             self._log_state_change_events()
 
-            # --------------------------------------------------------
-            # Explicit workflow events
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
+            # Explicit events
+            # ---------------------------------------------------------
 
             if self.logger.is_recording():
 
@@ -1377,9 +1613,9 @@ class MainWindow(QMainWindow):
                     "stop_all"
                 )
 
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
             # Recording ownership
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
 
             if sequence_owned_recording:
 
@@ -1412,9 +1648,10 @@ class MainWindow(QMainWindow):
     def _get_event_state_snapshot(
         self,
     ) -> dict:
-        """Return all discrete states that should generate events."""
+        """Return discrete states used for event detection."""
 
         return {
+
             "main_fan_active":
                 bool(
                     self.session.main_fan_active
@@ -1451,14 +1688,20 @@ class MainWindow(QMainWindow):
                 ),
         }
 
-    def _log_state_change_events(self) -> None:
+    # =================================================================
+    # EVENT LOGGING
+    # =================================================================
+
+    def _log_state_change_events(
+        self,
+    ) -> None:
         """
         Detect discrete state changes and write event records.
 
-        The snapshot is updated even when not recording.
+        Snapshot is updated even if recording is not active.
 
-        This prevents changes made before a recording from being
-        incorrectly logged after recording starts.
+        This prevents changes made before recording from appearing
+        as new events after recording starts.
         """
 
         current = (
@@ -1471,9 +1714,9 @@ class MainWindow(QMainWindow):
 
         if self.logger.is_recording():
 
-            # --------------------------------------------------------
-            # Main fan active
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
+            # Main fan ON/OFF
+            # ---------------------------------------------------------
 
             if (
                 current["main_fan_active"]
@@ -1483,18 +1726,22 @@ class MainWindow(QMainWindow):
                 self.logger.log_event(
                     (
                         "main_fan_on"
-                        if current["main_fan_active"]
+                        if current[
+                            "main_fan_active"
+                        ]
                         else "main_fan_off"
                     )
                 )
 
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
             # Main fan PWM
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
 
             if (
                 current["main_fan_pwm_percent"]
-                != previous["main_fan_pwm_percent"]
+                != previous[
+                    "main_fan_pwm_percent"
+                ]
             ):
 
                 self.logger.log_event(
@@ -1507,9 +1754,9 @@ class MainWindow(QMainWindow):
                     },
                 )
 
-            # --------------------------------------------------------
-            # Smoke fan active
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
+            # Smoke fan ON/OFF
+            # ---------------------------------------------------------
 
             if (
                 current["smoke_fan_active"]
@@ -1519,18 +1766,24 @@ class MainWindow(QMainWindow):
                 self.logger.log_event(
                     (
                         "smoke_fan_on"
-                        if current["smoke_fan_active"]
+                        if current[
+                            "smoke_fan_active"
+                        ]
                         else "smoke_fan_off"
                     )
                 )
 
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
             # Smoke fan PWM
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
 
             if (
-                current["smoke_fan_pwm_percent"]
-                != previous["smoke_fan_pwm_percent"]
+                current[
+                    "smoke_fan_pwm_percent"
+                ]
+                != previous[
+                    "smoke_fan_pwm_percent"
+                ]
             ):
 
                 self.logger.log_event(
@@ -1543,13 +1796,17 @@ class MainWindow(QMainWindow):
                     },
                 )
 
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
             # Smoke machine
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
 
             if (
-                current["smoke_machine_active"]
-                != previous["smoke_machine_active"]
+                current[
+                    "smoke_machine_active"
+                ]
+                != previous[
+                    "smoke_machine_active"
+                ]
             ):
 
                 self.logger.log_event(
@@ -1562,9 +1819,9 @@ class MainWindow(QMainWindow):
                     )
                 )
 
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
             # Sensor 1
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
 
             if (
                 current["sensor_1_active"]
@@ -1574,14 +1831,16 @@ class MainWindow(QMainWindow):
                 self.logger.log_event(
                     (
                         "sensor_1_on"
-                        if current["sensor_1_active"]
+                        if current[
+                            "sensor_1_active"
+                        ]
                         else "sensor_1_off"
                     )
                 )
 
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
             # Sensor 2
-            # --------------------------------------------------------
+            # ---------------------------------------------------------
 
             if (
                 current["sensor_2_active"]
@@ -1591,38 +1850,76 @@ class MainWindow(QMainWindow):
                 self.logger.log_event(
                     (
                         "sensor_2_on"
-                        if current["sensor_2_active"]
+                        if current[
+                            "sensor_2_active"
+                        ]
                         else "sensor_2_off"
                     )
                 )
 
-        self._last_event_state = current
+        # Snapshot always advances.
+        self._last_event_state = (
+            current
+        )
 
     # =================================================================
     # PLOT HELPERS
     # =================================================================
 
-    def _clear_all_plots(self) -> None:
-        """Clear all three live plot displays."""
+    def _clear_all_plots(
+        self,
+    ) -> None:
+        """
+        Clear:
+            - LIVE DATA graph
+            - CONTROL mini graph
+            - SEQUENCE mini graph
+        """
 
         self.live_tab.clear_plots()
+
         self.control_live_panel.clear_plots()
+
         self.sequence_live_panel.clear_plots()
+
+    def _reset_live_plots(
+        self,
+    ) -> None:
+        """
+        Clear all live graphs and reset GUI live time to zero.
+
+        IMPORTANT:
+        This does NOT change:
+            - logger state
+            - CSV timestamps
+            - recording elapsed time
+            - TestSession recording timing
+        """
+
+        self._live_start_monotonic = (
+            time.monotonic()
+        )
+
+        self._last_sequence_step = None
+
+        self._clear_all_plots()
 
     # =================================================================
     # GUI SYNCHRONIZATION
     # =================================================================
 
-    def _update_gui(self) -> None:
-        """Synchronize all GUI displays with TestSession."""
+    def _update_gui(
+        self,
+    ) -> None:
+        """Synchronize all displays with TestSession."""
 
         sequence_running = (
             self.sequence.is_running()
         )
 
-        # ------------------------------------------------------------
-        # CONTROL
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # CONTROL controls
+        # -------------------------------------------------------------
 
         self.control_tab.set_main_fan_active(
             self.session.main_fan_active
@@ -1660,25 +1957,26 @@ class MainWindow(QMainWindow):
             sequence_running
         )
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # SEQUENCE
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         self.sequence_tab.set_sequence_running(
             sequence_running
         )
 
-        # Smoke-machine controls in CONTROL and SEQUENCE always
-        # represent the same TestSession state.
+        # CONTROL and SEQUENCE smoke-machine buttons always display
+        # the same TestSession state.
         self.sequence_tab.set_smoke_machine_active(
             self.session.smoke_machine_active
         )
 
-        # ------------------------------------------------------------
-        # Shared live display values
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # Shared sensor data
+        # -------------------------------------------------------------
 
         sensor_kwargs = {
+
             "sensor_1_active":
                 self.session.sensor_1_active,
 
@@ -1692,7 +1990,17 @@ class MainWindow(QMainWindow):
                 self.session.sensor_2_voltage_v,
         }
 
+        # New CONTROL cards also show live voltage.
+        self.control_tab.update_sensor_values(
+            **sensor_kwargs
+        )
+
+        # -------------------------------------------------------------
+        # Shared fan data
+        # -------------------------------------------------------------
+
         fan_kwargs = {
+
             "main_fan_active":
                 self.session.main_fan_active,
 
@@ -1706,7 +2014,12 @@ class MainWindow(QMainWindow):
                 self.session.smoke_fan_pwm_percent,
         }
 
+        # -------------------------------------------------------------
+        # Shared experiment state
+        # -------------------------------------------------------------
+
         experiment_kwargs = {
+
             "recording":
                 self.logger.is_recording(),
 
@@ -1722,6 +2035,10 @@ class MainWindow(QMainWindow):
             "sequence_step":
                 self.sequence.get_current_step_number(),
         }
+
+        # -------------------------------------------------------------
+        # Update all display-only panels
+        # -------------------------------------------------------------
 
         for display in (
             self.live_tab,
@@ -1752,9 +2069,12 @@ class MainWindow(QMainWindow):
         """
         Handle serious runtime error.
 
-        The update timer is stopped and fan outputs are placed in a
-        safe state.
+        Timer stops and fan outputs are placed in safe state.
         """
+
+        # -------------------------------------------------------------
+        # Stop update timer
+        # -------------------------------------------------------------
 
         if hasattr(
             self,
@@ -1763,33 +2083,49 @@ class MainWindow(QMainWindow):
 
             self.update_timer.stop()
 
-        # ------------------------------------------------------------
-        # Stop sequence / fans
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # Stop sequence
+        # -------------------------------------------------------------
 
         try:
 
             if self.sequence.is_running():
+
                 self.sequence.stop()
 
         except Exception:
+
             pass
 
+        # -------------------------------------------------------------
+        # Stop fans
+        # -------------------------------------------------------------
+
         try:
+
             self.main_fan.stop()
+
         except Exception:
+
             pass
 
         try:
+
             self.smoke_fan.stop()
+
         except Exception:
+
             pass
+
+        # -------------------------------------------------------------
+        # Synchronize session
+        # -------------------------------------------------------------
 
         self.session.apply_stop_all_state()
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Preserve recording file if possible
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         try:
 
@@ -1803,13 +2139,21 @@ class MainWindow(QMainWindow):
                 self.logger.stop()
 
         except Exception:
+
             pass
 
         self._recording_started_by_sequence = False
 
+        # -------------------------------------------------------------
+        # Try to refresh GUI
+        # -------------------------------------------------------------
+
         try:
+
             self._update_gui()
+
         except Exception:
+
             pass
 
         self._show_error(
@@ -1817,12 +2161,16 @@ class MainWindow(QMainWindow):
             exception,
         )
 
+    # =================================================================
+    # ERROR DIALOG
+    # =================================================================
+
     @staticmethod
     def _show_error(
         title: str,
         exception: Exception,
     ) -> None:
-        """Display error dialog."""
+        """Display critical-error dialog."""
 
         QMessageBox.critical(
             None,
@@ -1834,7 +2182,9 @@ class MainWindow(QMainWindow):
     # CLEANUP
     # =================================================================
 
-    def cleanup(self) -> None:
+    def cleanup(
+        self,
+    ) -> None:
         """Safely shut down complete application."""
 
         if self._cleanup_done:
@@ -1842,9 +2192,9 @@ class MainWindow(QMainWindow):
 
         self._cleanup_done = True
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Timer
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         if hasattr(
             self,
@@ -1853,9 +2203,9 @@ class MainWindow(QMainWindow):
 
             self.update_timer.stop()
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Logger
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         try:
 
@@ -1868,67 +2218,108 @@ class MainWindow(QMainWindow):
             self.logger.cleanup()
 
         except Exception:
+
             pass
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # Sequence
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         try:
+
             self.sequence.cleanup()
+
         except Exception:
+
             pass
 
-        # ------------------------------------------------------------
-        # Sensors
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # Sensor 1
+        # -------------------------------------------------------------
 
         try:
+
             self.sensor_1.cleanup()
+
         except Exception:
+
             pass
 
+        # -------------------------------------------------------------
+        # Sensor 2
+        # -------------------------------------------------------------
+
         try:
+
             self.sensor_2.cleanup()
+
         except Exception:
+
             pass
 
-        # ------------------------------------------------------------
-        # Fans
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # Main fan
+        # -------------------------------------------------------------
 
         try:
+
             self.main_fan.cleanup()
+
         except Exception:
+
             pass
 
+        # -------------------------------------------------------------
+        # Smoke fan
+        # -------------------------------------------------------------
+
         try:
+
             self.smoke_fan.cleanup()
+
         except Exception:
+
             pass
 
-        # ------------------------------------------------------------
-        # LEDs
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
+        # Sensor 1 LED
+        # -------------------------------------------------------------
 
         try:
+
             self.sensor_1_led.cleanup()
+
         except Exception:
+
             pass
 
+        # -------------------------------------------------------------
+        # Sensor 2 LED
+        # -------------------------------------------------------------
+
         try:
+
             self.sensor_2_led.cleanup()
+
         except Exception:
+
             pass
 
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
         # ADC
-        # ------------------------------------------------------------
+        # -------------------------------------------------------------
 
         try:
+
             self.adc.close()
+
         except Exception:
+
             pass
+
+    # =================================================================
+    # WINDOW CLOSE
+    # =================================================================
 
     def closeEvent(
         self,
