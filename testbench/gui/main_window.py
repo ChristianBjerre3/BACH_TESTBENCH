@@ -33,6 +33,8 @@ MainWindow owns:
     - Sensor selection for sequences
     - Smoke-machine state synchronization
     - Independent live-plot timebase
+    - Live plot freeze/resume control
+    - Optional freeze when a sequence ends
     - Sequence-step graph markers
 """
 
@@ -153,7 +155,6 @@ class MainWindow(QMainWindow):
             900,
         )
 
-        # Apply central dark dashboard stylesheet.
         self.setStyleSheet(
             APP_STYLESHEET
         )
@@ -172,6 +173,27 @@ class MainWindow(QMainWindow):
 
         # Used for sequence-step graph markers.
         self._last_sequence_step = None
+
+        # -------------------------------------------------------------
+        # Live plot state
+        #
+        # Plotting is deliberately separate from sensor acquisition
+        # and CSV recording. Turning the live plot OFF only freezes the
+        # graphs; sensor values and logging continue normally.
+        # -------------------------------------------------------------
+
+        self._live_plot_enabled = True
+
+        # Pause-aware graph clock.
+        #
+        # When plotting is frozen, graph time also pauses. When plotting
+        # resumes, the X-axis continues from where it stopped instead of
+        # jumping forward by the frozen duration.
+        self._live_plot_paused_at_monotonic = None
+        self._live_plot_paused_total_s = 0.0
+
+        # Sequence option captured when RUN SEQUENCE is pressed.
+        self._freeze_plot_after_sequence = False
 
         # -------------------------------------------------------------
         # Recording ownership
@@ -579,6 +601,14 @@ class MainWindow(QMainWindow):
         )
 
         # -------------------------------------------------------------
+        # Live plot
+        # -------------------------------------------------------------
+
+        self.control_tab.live_plot_enabled_changed.connect(
+            self._set_live_plot_enabled
+        )
+
+        # -------------------------------------------------------------
         # STOP ALL
         # -------------------------------------------------------------
 
@@ -649,7 +679,7 @@ class MainWindow(QMainWindow):
             6. Store sensor values
             7. Log one time-series sample if recording
             8. Update GUI
-            9. Update all graphs
+            9. Update graphs only if live plotting is enabled
         """
 
         try:
@@ -679,14 +709,14 @@ class MainWindow(QMainWindow):
                 )
 
                 if (
-                    current_step is not None
+                    self._live_plot_enabled
+                    and current_step is not None
                     and current_step
                     != self._last_sequence_step
                 ):
 
                     marker_time_s = (
-                        time.monotonic()
-                        - self._live_start_monotonic
+                        self._get_live_plot_time_s()
                     )
 
                     self.live_tab.add_sequence_step_marker(
@@ -754,39 +784,163 @@ class MainWindow(QMainWindow):
             self._update_gui()
 
             # ---------------------------------------------------------
-            # Independent GUI graph time
+            # Independent GUI graph time / plotting
+            #
+            # Sensor acquisition, live numerical values and CSV logging
+            # continue regardless of this state.
             # ---------------------------------------------------------
 
-            live_time_s = (
-                time.monotonic()
-                - self._live_start_monotonic
-            )
+            if self._live_plot_enabled:
 
-            # Main LIVE DATA graph
-            self.live_tab.add_plot_sample(
-                live_time_s=live_time_s,
-                sensor_1_voltage=sensor_1_voltage,
-                sensor_2_voltage=sensor_2_voltage,
-            )
+                live_time_s = (
+                    self._get_live_plot_time_s()
+                )
 
-            # CONTROL side graph
-            self.control_live_panel.add_plot_sample(
-                live_time_s=live_time_s,
-                sensor_1_voltage=sensor_1_voltage,
-                sensor_2_voltage=sensor_2_voltage,
-            )
+                # Main LIVE DATA graph
+                self.live_tab.add_plot_sample(
+                    live_time_s=live_time_s,
+                    sensor_1_voltage=sensor_1_voltage,
+                    sensor_2_voltage=sensor_2_voltage,
+                )
 
-            # SEQUENCE side graph
-            self.sequence_live_panel.add_plot_sample(
-                live_time_s=live_time_s,
-                sensor_1_voltage=sensor_1_voltage,
-                sensor_2_voltage=sensor_2_voltage,
-            )
+                # CONTROL side graph
+                self.control_live_panel.add_plot_sample(
+                    live_time_s=live_time_s,
+                    sensor_1_voltage=sensor_1_voltage,
+                    sensor_2_voltage=sensor_2_voltage,
+                )
+
+                # SEQUENCE side graph
+                self.sequence_live_panel.add_plot_sample(
+                    live_time_s=live_time_s,
+                    sensor_1_voltage=sensor_1_voltage,
+                    sensor_2_voltage=sensor_2_voltage,
+                )
 
         except Exception as exc:
 
             self._handle_runtime_error(
                 exc
+            )
+
+    # =================================================================
+    # LIVE PLOT CONTROL
+    # =================================================================
+
+    def _set_live_plot_enabled(
+        self,
+        enabled: bool,
+    ) -> None:
+        """
+        Enable or freeze graph updates.
+
+        This affects graph display only.
+
+        It does NOT:
+            - Stop sensor reads
+            - Stop live voltage labels
+            - Stop CSV recording
+            - Stop or change a sequence
+        """
+
+        enabled = bool(
+            enabled
+        )
+
+        if enabled == self._live_plot_enabled:
+
+            self._update_live_plot_status()
+
+            return
+
+        now = time.monotonic()
+
+        if enabled:
+
+            # Resume graph clock without counting frozen duration.
+            if self._live_plot_paused_at_monotonic is not None:
+
+                self._live_plot_paused_total_s += (
+                    now
+                    - self._live_plot_paused_at_monotonic
+                )
+
+                self._live_plot_paused_at_monotonic = None
+
+        else:
+
+            # Freeze graph clock at the current graph time.
+            self._live_plot_paused_at_monotonic = (
+                now
+            )
+
+        self._live_plot_enabled = enabled
+
+        self._update_live_plot_status()
+
+    def _get_live_plot_time_s(
+        self,
+    ) -> float:
+        """
+        Return pause-aware live graph time.
+
+        Frozen periods are excluded so the X-axis continues smoothly
+        when plotting resumes.
+        """
+
+        if self._live_plot_paused_at_monotonic is not None:
+
+            now = (
+                self._live_plot_paused_at_monotonic
+            )
+
+        else:
+
+            now = time.monotonic()
+
+        elapsed = (
+            now
+            - self._live_start_monotonic
+            - self._live_plot_paused_total_s
+        )
+
+        return max(
+            0.0,
+            float(elapsed),
+        )
+
+    def _update_live_plot_status(
+        self,
+    ) -> None:
+        """Synchronize plot state across CONTROL and side panels."""
+
+        self.control_tab.set_live_plot_enabled(
+            self._live_plot_enabled
+        )
+
+        self.control_live_panel.update_live_plot_status(
+            self._live_plot_enabled
+        )
+
+        self.sequence_live_panel.update_live_plot_status(
+            self._live_plot_enabled
+        )
+
+    def _apply_sequence_end_plot_behavior(
+        self,
+    ) -> None:
+        """
+        Apply selected sequence plot behavior.
+
+        If selected, graphs freeze when the sequence ends.
+
+        Sensors, numerical values and any manual recording continue.
+        """
+
+        if self._freeze_plot_after_sequence:
+
+            self._set_live_plot_enabled(
+                False
             )
 
     # =================================================================
@@ -1067,19 +1221,15 @@ class MainWindow(QMainWindow):
             # Manual recording ownership.
             self._recording_started_by_sequence = False
 
-            # Update baseline after recording begins so old changes
-            # are not falsely logged as new events.
             self._last_event_state = (
                 self._get_event_state_snapshot()
             )
 
             # ---------------------------------------------------------
-            # IMPORTANT:
+            # New recording = fresh visual graph timeline.
             #
-            # Starting a new recording starts a fresh visual graph
-            # timeline at 0 s.
-            #
-            # This does NOT affect CSV elapsed time or logger timing.
+            # Plot state itself is NOT changed here.
+            # If user has manually frozen the graph, it remains frozen.
             # ---------------------------------------------------------
 
             self._reset_live_plots()
@@ -1112,8 +1262,6 @@ class MainWindow(QMainWindow):
 
         try:
 
-            # Prevent manual button accidentally stopping
-            # a sequence-owned recording.
             if self._recording_started_by_sequence:
                 return
 
@@ -1152,15 +1300,16 @@ class MainWindow(QMainWindow):
 
         Workflow:
 
-            1. Read options
+            1. Read sequence options
             2. Check recording conflict
             3. Build sequence steps
-            4. Apply selected sensors
-            5. Start sequence recording if selected
-            6. Reset visual graph time to 0
-            7. Start sequence
-            8. Add Step 1 graph marker
-            9. Lock controls
+            4. Enable live plotting
+            5. Apply selected sensors
+            6. Start sequence recording if selected
+            7. Reset graph timeline to 0
+            8. Start sequence
+            9. Add Step 1 marker
+            10. Lock controls
 
         An unrecorded sequence may run while a manual recording is
         active. The manual recording continues unchanged.
@@ -1171,6 +1320,14 @@ class MainWindow(QMainWindow):
 
         record_sequence = (
             self.sequence_tab.get_record_sequence()
+        )
+
+        freeze_plot_after_sequence = (
+            self.sequence_tab.get_freeze_plot_after_sequence()
+        )
+
+        previous_live_plot_enabled = (
+            self._live_plot_enabled
         )
 
         # -------------------------------------------------------------
@@ -1198,7 +1355,7 @@ class MainWindow(QMainWindow):
         try:
 
             # ---------------------------------------------------------
-            # Convert GUI table rows to SequenceStep objects
+            # Convert GUI rows to SequenceStep objects
             # ---------------------------------------------------------
 
             steps = [
@@ -1234,6 +1391,22 @@ class MainWindow(QMainWindow):
                 steps
             )
 
+            # Capture this run's plot behavior.
+            self._freeze_plot_after_sequence = bool(
+                freeze_plot_after_sequence
+            )
+
+            # ---------------------------------------------------------
+            # Every sequence begins with plotting ON.
+            #
+            # This ensures a previously frozen graph never causes an
+            # automatic test to run without being shown.
+            # ---------------------------------------------------------
+
+            self._set_live_plot_enabled(
+                True
+            )
+
             # ---------------------------------------------------------
             # Apply sequence sensor selection
             # ---------------------------------------------------------
@@ -1262,7 +1435,6 @@ class MainWindow(QMainWindow):
                 sensor_2_selected
             )
 
-            # Synchronize state changes.
             self._log_state_change_events()
 
             # ---------------------------------------------------------
@@ -1296,16 +1468,7 @@ class MainWindow(QMainWindow):
                 )
 
             # ---------------------------------------------------------
-            # IMPORTANT:
-            #
-            # EVERY sequence resets the visual graph timeline.
-            #
-            # This happens even when:
-            #     Record sequence = unchecked
-            #
-            # and even if a manual recording is already active.
-            #
-            # Only GUI live time changes.
+            # EVERY sequence starts a fresh graph at 0 s.
             # ---------------------------------------------------------
 
             self._reset_live_plots()
@@ -1316,11 +1479,10 @@ class MainWindow(QMainWindow):
 
             self.sequence.start()
 
-            # Sequence.start() immediately applies Step 1.
             self._log_state_change_events()
 
             # ---------------------------------------------------------
-            # Add Step 1 marker at exact graph origin
+            # Step 1 marker at graph origin
             # ---------------------------------------------------------
 
             current_step = (
@@ -1401,9 +1563,12 @@ class MainWindow(QMainWindow):
 
             self._recording_started_by_sequence = False
 
-            # ---------------------------------------------------------
-            # Attempt safe sequence stop
-            # ---------------------------------------------------------
+            self._freeze_plot_after_sequence = False
+
+            # Restore previous manual plot state.
+            self._set_live_plot_enabled(
+                previous_live_plot_enabled
+            )
 
             try:
 
@@ -1444,7 +1609,6 @@ class MainWindow(QMainWindow):
 
             self.sequence.stop()
 
-            # Capture fan OFF / PWM 0 while logger is still open.
             self._log_state_change_events()
 
             if self.logger.is_recording():
@@ -1453,10 +1617,6 @@ class MainWindow(QMainWindow):
                     "sequence_stopped",
                     "manual",
                 )
-
-            # ---------------------------------------------------------
-            # Stop recording only when sequence owns it.
-            # ---------------------------------------------------------
 
             if (
                 self._recording_started_by_sequence
@@ -1474,6 +1634,11 @@ class MainWindow(QMainWindow):
             self.sequence_tab.set_sequence_running(
                 False
             )
+
+            # Apply selected Freeze-after-sequence behavior.
+            self._apply_sequence_end_plot_behavior()
+
+            self._freeze_plot_after_sequence = False
 
             self._update_gui()
 
@@ -1498,10 +1663,6 @@ class MainWindow(QMainWindow):
             - set PWM to zero
             - marked sequence_running False
         """
-
-        # -------------------------------------------------------------
-        # Capture automatic final fan state
-        # -------------------------------------------------------------
 
         self._log_state_change_events()
 
@@ -1533,6 +1694,14 @@ class MainWindow(QMainWindow):
         self.sequence_tab.set_sequence_running(
             False
         )
+
+        # -------------------------------------------------------------
+        # Freeze graph if selected for this sequence.
+        # -------------------------------------------------------------
+
+        self._apply_sequence_end_plot_behavior()
+
+        self._freeze_plot_after_sequence = False
 
         self._update_gui()
 
@@ -1587,7 +1756,6 @@ class MainWindow(QMainWindow):
 
                 self.smoke_fan.stop()
 
-            # Update session to matching STOP ALL state.
             self.session.apply_stop_all_state()
 
             # ---------------------------------------------------------
@@ -1632,6 +1800,14 @@ class MainWindow(QMainWindow):
             self.sequence_tab.set_sequence_running(
                 False
             )
+
+            # If STOP ALL ended an active sequence, respect the sequence
+            # option for freezing the completed/aborted graph.
+            if sequence_was_running:
+
+                self._apply_sequence_end_plot_behavior()
+
+                self._freeze_plot_after_sequence = False
 
             self._update_gui()
 
@@ -1857,7 +2033,6 @@ class MainWindow(QMainWindow):
                     )
                 )
 
-        # Snapshot always advances.
         self._last_event_state = (
             current
         )
@@ -1888,6 +2063,9 @@ class MainWindow(QMainWindow):
         """
         Clear all live graphs and reset GUI live time to zero.
 
+        If plotting is currently frozen, graph time remains paused at
+        0 s until plotting is enabled again.
+
         IMPORTANT:
         This does NOT change:
             - logger state
@@ -1896,9 +2074,23 @@ class MainWindow(QMainWindow):
             - TestSession recording timing
         """
 
+        now = time.monotonic()
+
         self._live_start_monotonic = (
-            time.monotonic()
+            now
         )
+
+        self._live_plot_paused_total_s = 0.0
+
+        if self._live_plot_enabled:
+
+            self._live_plot_paused_at_monotonic = None
+
+        else:
+
+            self._live_plot_paused_at_monotonic = (
+                now
+            )
 
         self._last_sequence_step = None
 
@@ -1918,7 +2110,7 @@ class MainWindow(QMainWindow):
         )
 
         # -------------------------------------------------------------
-        # CONTROL controls
+        # CONTROL
         # -------------------------------------------------------------
 
         self.control_tab.set_main_fan_active(
@@ -1958,6 +2150,12 @@ class MainWindow(QMainWindow):
         )
 
         # -------------------------------------------------------------
+        # Live plot state
+        # -------------------------------------------------------------
+
+        self._update_live_plot_status()
+
+        # -------------------------------------------------------------
         # SEQUENCE
         # -------------------------------------------------------------
 
@@ -1965,8 +2163,6 @@ class MainWindow(QMainWindow):
             sequence_running
         )
 
-        # CONTROL and SEQUENCE smoke-machine buttons always display
-        # the same TestSession state.
         self.sequence_tab.set_smoke_machine_active(
             self.session.smoke_machine_active
         )
@@ -1990,7 +2186,6 @@ class MainWindow(QMainWindow):
                 self.session.sensor_2_voltage_v,
         }
 
-        # New CONTROL cards also show live voltage.
         self.control_tab.update_sensor_values(
             **sensor_kwargs
         )
@@ -2037,7 +2232,7 @@ class MainWindow(QMainWindow):
         }
 
         # -------------------------------------------------------------
-        # Update all display-only panels
+        # Update display-only panels
         # -------------------------------------------------------------
 
         for display in (
@@ -2071,10 +2266,6 @@ class MainWindow(QMainWindow):
 
         Timer stops and fan outputs are placed in safe state.
         """
-
-        # -------------------------------------------------------------
-        # Stop update timer
-        # -------------------------------------------------------------
 
         if hasattr(
             self,
@@ -2143,10 +2334,6 @@ class MainWindow(QMainWindow):
             pass
 
         self._recording_started_by_sequence = False
-
-        # -------------------------------------------------------------
-        # Try to refresh GUI
-        # -------------------------------------------------------------
 
         try:
 
@@ -2234,7 +2421,7 @@ class MainWindow(QMainWindow):
             pass
 
         # -------------------------------------------------------------
-        # Sensor 1
+        # Sensors
         # -------------------------------------------------------------
 
         try:
@@ -2245,10 +2432,6 @@ class MainWindow(QMainWindow):
 
             pass
 
-        # -------------------------------------------------------------
-        # Sensor 2
-        # -------------------------------------------------------------
-
         try:
 
             self.sensor_2.cleanup()
@@ -2258,7 +2441,7 @@ class MainWindow(QMainWindow):
             pass
 
         # -------------------------------------------------------------
-        # Main fan
+        # Fans
         # -------------------------------------------------------------
 
         try:
@@ -2269,10 +2452,6 @@ class MainWindow(QMainWindow):
 
             pass
 
-        # -------------------------------------------------------------
-        # Smoke fan
-        # -------------------------------------------------------------
-
         try:
 
             self.smoke_fan.cleanup()
@@ -2282,7 +2461,7 @@ class MainWindow(QMainWindow):
             pass
 
         # -------------------------------------------------------------
-        # Sensor 1 LED
+        # LEDs
         # -------------------------------------------------------------
 
         try:
@@ -2292,10 +2471,6 @@ class MainWindow(QMainWindow):
         except Exception:
 
             pass
-
-        # -------------------------------------------------------------
-        # Sensor 2 LED
-        # -------------------------------------------------------------
 
         try:
 

@@ -1,12 +1,9 @@
 """
 gui/control_tab.py
 
-Redesigned manual CONTROL interface for the Airflow Smoke Test Bench.
+Manual CONTROL interface for the Airflow Smoke Test Bench.
 
-The visual design follows the approved dark dashboard concept while
-preserving the existing application functionality.
-
-CONTROL remains the manual workflow.
+CONTROL is the manual workflow.
 
 Available functionality:
     - Test name
@@ -18,21 +15,22 @@ Available functionality:
     - Smoke fan PWM
     - Sensor 1 ON/OFF
     - Sensor 2 ON/OFF
-    - Sensor 1 live voltage display
-    - Sensor 2 live voltage display
+    - Sensor 1 live voltage
+    - Sensor 2 live voltage
     - Manual smoke-machine ON/OFF logging
-    - Start/stop manual recording
+    - Manual recording start/stop
+    - Live plot ON/OFF
     - STOP ALL
 
-When a sequence is running:
-    - Manual fan controls are locked
-    - Sensor controls are locked
-    - Metadata is locked
-    - Manual recording controls are locked
+IMPORTANT:
+Live plot only controls whether graphs receive new samples.
 
-Still available during a sequence:
-    - Smoke-machine manual log toggle
-    - STOP ALL
+Turning Live plot OFF does NOT:
+    - Disable sensors
+    - Stop ADC readings
+    - Stop live voltage values
+    - Stop CSV recording
+    - Stop a sequence
 
 This module contains GUI behavior only.
 It does not directly access hardware.
@@ -91,6 +89,9 @@ class ControlTab(QWidget):
 
     stop_all_requested = Signal()
 
+    # New display-only control.
+    live_plot_enabled_changed = Signal(bool)
+
     # =================================================================
     # INITIALIZATION
     # =================================================================
@@ -100,6 +101,8 @@ class ControlTab(QWidget):
 
         self._sequence_running = False
         self._recording = False
+
+        self._live_plot_enabled = True
 
         self._sensor_1_voltage: Optional[float] = None
         self._sensor_2_voltage: Optional[float] = None
@@ -114,9 +117,9 @@ class ControlTab(QWidget):
 
     def _build_ui(self) -> None:
         """
-        Build the redesigned CONTROL interface.
+        Build CONTROL dashboard.
 
-        Layout concept:
+        Layout:
 
         ┌──────────────────────┬──────────────────────┐
         │ TEST INFORMATION     │ MAIN FAN             │
@@ -125,13 +128,10 @@ class ControlTab(QWidget):
         ├──────────────────────┼──────────────────────┤
         │ SENSOR 2             │ SMOKE MACHINE        │
         ├──────────────────────┴──────────────────────┤
-        │ RECORDING                                   │
-        ├─────────────────────────────────────────────┤
-        │ STOP ALL                                    │
+        │ RECORDING / LIVE PLOT                       │
         └─────────────────────────────────────────────┘
 
-        The final main_window redesign will place STOP ALL together
-        with the right-side live panel.
+        STOP ALL is moved to the right-side column by MainWindow.
         """
 
         main_layout = QVBoxLayout(self)
@@ -297,7 +297,7 @@ class ControlTab(QWidget):
         )
 
         # -------------------------------------------------------------
-        # Recording
+        # Recording + Live Plot
         # -------------------------------------------------------------
 
         self.recording_card = (
@@ -311,7 +311,8 @@ class ControlTab(QWidget):
         # -------------------------------------------------------------
         # STOP ALL
         #
-        # Kept visible until MainWindow is redesigned.
+        # MainWindow removes this widget from this layout and places it
+        # below the right-side live panel.
         # -------------------------------------------------------------
 
         self.stop_all_button = (
@@ -346,7 +347,7 @@ class ControlTab(QWidget):
     def _create_card_title(
         text: str,
     ) -> QLabel:
-        """Create standard card-title label."""
+        """Create standard card title."""
 
         label = QLabel(
             text.upper()
@@ -363,10 +364,12 @@ class ControlTab(QWidget):
     def _create_state_text(
         active: bool = False,
     ) -> QLabel:
-        """Create small ON/OFF state label."""
+        """Create ON/OFF status label."""
 
         label = QLabel(
-            "ON" if active else "OFF"
+            "ON"
+            if active
+            else "OFF"
         )
 
         label.setAlignment(
@@ -415,10 +418,7 @@ class ControlTab(QWidget):
             )
         )
 
-        # -------------------------------------------------------------
         # Test name
-        # -------------------------------------------------------------
-
         test_label = QLabel(
             "Test name"
         )
@@ -442,10 +442,7 @@ class ControlTab(QWidget):
             self.test_name_input
         )
 
-        # -------------------------------------------------------------
         # Mount
-        # -------------------------------------------------------------
-
         mount_label = QLabel(
             "Mount"
         )
@@ -469,10 +466,7 @@ class ControlTab(QWidget):
             self.mount_name_input
         )
 
-        # -------------------------------------------------------------
         # Comment
-        # -------------------------------------------------------------
-
         comment_label = QLabel(
             "Comment"
         )
@@ -528,10 +522,6 @@ class ControlTab(QWidget):
             7
         )
 
-        # -------------------------------------------------------------
-        # Header
-        # -------------------------------------------------------------
-
         header = QHBoxLayout()
 
         header.addWidget(
@@ -553,10 +543,6 @@ class ControlTab(QWidget):
         layout.addLayout(
             header
         )
-
-        # -------------------------------------------------------------
-        # Main row
-        # -------------------------------------------------------------
 
         row = QHBoxLayout()
 
@@ -748,10 +734,6 @@ class ControlTab(QWidget):
             10
         )
 
-        # -------------------------------------------------------------
-        # Header
-        # -------------------------------------------------------------
-
         header = QHBoxLayout()
 
         header.addWidget(
@@ -774,10 +756,7 @@ class ControlTab(QWidget):
             header
         )
 
-        # -------------------------------------------------------------
-        # ON/OFF
-        # -------------------------------------------------------------
-
+        # Power
         control_row = QHBoxLayout()
 
         state_label = QLabel(
@@ -816,10 +795,7 @@ class ControlTab(QWidget):
             control_row
         )
 
-        # -------------------------------------------------------------
         # PWM
-        # -------------------------------------------------------------
-
         pwm_row = QHBoxLayout()
 
         pwm_label = QLabel(
@@ -903,6 +879,7 @@ class ControlTab(QWidget):
             header
         )
 
+        # Power
         control_row = QHBoxLayout()
 
         state_label = QLabel(
@@ -941,6 +918,7 @@ class ControlTab(QWidget):
             control_row
         )
 
+        # PWM
         pwm_row = QHBoxLayout()
 
         pwm_label = QLabel(
@@ -986,9 +964,7 @@ class ControlTab(QWidget):
         """
         Create Smoke Machine card.
 
-        IMPORTANT:
-        This is manual logging only.
-        The Raspberry Pi does not physically control the smoke machine.
+        Manual logging only.
         """
 
         card = self._new_card()
@@ -1084,13 +1060,17 @@ class ControlTab(QWidget):
         return card
 
     # =================================================================
-    # RECORDING CARD
+    # RECORDING / LIVE PLOT CARD
     # =================================================================
 
     def _create_recording_card(
         self,
     ) -> QFrame:
-        """Create manual Recording card."""
+        """
+        Create Recording card including Live Plot control.
+
+        Live Plot is independent of recording.
+        """
 
         card = self._new_card()
 
@@ -1106,11 +1086,11 @@ class ControlTab(QWidget):
         )
 
         layout.setSpacing(
-            12
+            18
         )
 
         # -------------------------------------------------------------
-        # Title / status
+        # Recording state
         # -------------------------------------------------------------
 
         text_layout = QVBoxLayout()
@@ -1145,6 +1125,63 @@ class ControlTab(QWidget):
         )
 
         layout.addStretch()
+
+        # -------------------------------------------------------------
+        # Live plot control
+        # -------------------------------------------------------------
+
+        plot_layout = QVBoxLayout()
+
+        plot_layout.setSpacing(
+            3
+        )
+
+        plot_title = QLabel(
+            "Live plot"
+        )
+
+        set_label_role(
+            plot_title,
+            "fieldLabel",
+        )
+
+        self.live_plot_button = QPushButton(
+            "ON"
+        )
+
+        self.live_plot_button.setCheckable(
+            True
+        )
+
+        self.live_plot_button.setChecked(
+            True
+        )
+
+        self.live_plot_button.setMinimumWidth(
+            90
+        )
+
+        self.live_plot_button.setToolTip(
+            "Controls graph updates only. "
+            "Sensors, live values and recording continue."
+        )
+
+        set_role(
+            self.live_plot_button,
+            "toggle",
+        )
+
+        plot_layout.addWidget(
+            plot_title
+        )
+
+        plot_layout.addWidget(
+            self.live_plot_button
+        )
+
+        layout.addLayout(
+            plot_layout
+        )
 
         # -------------------------------------------------------------
         # Recording buttons
@@ -1223,7 +1260,7 @@ class ControlTab(QWidget):
 
     @staticmethod
     def _create_pwm_combo() -> QComboBox:
-        """Create PWM selector from config.PWM_LEVELS."""
+        """Create PWM selector."""
 
         combo = QComboBox()
 
@@ -1243,7 +1280,7 @@ class ControlTab(QWidget):
     def _connect_internal_signals(
         self,
     ) -> None:
-        """Connect widgets to existing public signals."""
+        """Connect widgets to public signals."""
 
         # Main fan
         self.main_fan_button.toggled.connect(
@@ -1284,6 +1321,11 @@ class ControlTab(QWidget):
 
         self.stop_recording_button.clicked.connect(
             self.stop_recording_requested.emit
+        )
+
+        # Live plot
+        self.live_plot_button.toggled.connect(
+            self._on_live_plot_toggled
         )
 
         # STOP ALL
@@ -1443,6 +1485,33 @@ class ControlTab(QWidget):
         )
 
     # =================================================================
+    # LIVE PLOT EVENT
+    # =================================================================
+
+    def _on_live_plot_toggled(
+        self,
+        enabled: bool,
+    ) -> None:
+        """
+        Request live graph updates to be enabled or disabled.
+
+        No sensor, logger or hardware state is changed here.
+        """
+
+        self._live_plot_enabled = bool(
+            enabled
+        )
+
+        self._set_toggle_button_text(
+            self.live_plot_button,
+            self._live_plot_enabled,
+        )
+
+        self.live_plot_enabled_changed.emit(
+            self._live_plot_enabled
+        )
+
+    # =================================================================
     # INITIAL STATE
     # =================================================================
 
@@ -1491,6 +1560,10 @@ class ControlTab(QWidget):
             False
         )
 
+        self.set_live_plot_enabled(
+            True
+        )
+
         self.set_sequence_running(
             False
         )
@@ -1516,7 +1589,7 @@ class ControlTab(QWidget):
         label: QLabel,
         active: bool,
     ) -> None:
-        """Update a small card state label."""
+        """Update small ON/OFF state label."""
 
         label.setText(
             "ON"
@@ -1727,11 +1800,7 @@ class ControlTab(QWidget):
         self,
         voltage: Optional[float],
     ) -> None:
-        """
-        Update Sensor 1 voltage display.
-
-        Display-only. Does not read hardware.
-        """
+        """Update Sensor 1 voltage display."""
 
         self._sensor_1_voltage = voltage
 
@@ -1745,11 +1814,7 @@ class ControlTab(QWidget):
         self,
         voltage: Optional[float],
     ) -> None:
-        """
-        Update Sensor 2 voltage display.
-
-        Display-only. Does not read hardware.
-        """
+        """Update Sensor 2 voltage display."""
 
         self._sensor_2_voltage = voltage
 
@@ -1766,12 +1831,7 @@ class ControlTab(QWidget):
         sensor_2_active: bool,
         sensor_2_voltage: Optional[float],
     ) -> None:
-        """
-        Convenience method for MainWindow.
-
-        This allows MainWindow to update both sensor cards from the
-        same sensor sample already used for logging/live plots.
-        """
+        """Update both sensor cards from one shared sample."""
 
         self.set_sensor_1_active(
             sensor_1_active
@@ -1825,6 +1885,49 @@ class ControlTab(QWidget):
         )
 
     # =================================================================
+    # LIVE PLOT STATE
+    # =================================================================
+
+    def set_live_plot_enabled(
+        self,
+        enabled: bool,
+    ) -> None:
+        """
+        Synchronize Live Plot button without emitting a signal.
+
+        MainWindow can use this when plotting is automatically frozen
+        after a sequence.
+        """
+
+        self._live_plot_enabled = bool(
+            enabled
+        )
+
+        self.live_plot_button.blockSignals(
+            True
+        )
+
+        self.live_plot_button.setChecked(
+            self._live_plot_enabled
+        )
+
+        self._set_toggle_button_text(
+            self.live_plot_button,
+            self._live_plot_enabled,
+        )
+
+        self.live_plot_button.blockSignals(
+            False
+        )
+
+    def get_live_plot_enabled(
+        self,
+    ) -> bool:
+        """Return current Live Plot selection."""
+
+        return self._live_plot_enabled
+
+    # =================================================================
     # RECORDING STATE
     # =================================================================
 
@@ -1832,11 +1935,7 @@ class ControlTab(QWidget):
         self,
         recording: bool,
     ) -> None:
-        """
-        Update displayed recording state.
-
-        Button availability also depends on sequence state.
-        """
+        """Update displayed recording state."""
 
         self._recording = bool(
             recording
@@ -1885,17 +1984,18 @@ class ControlTab(QWidget):
         running: bool,
     ) -> None:
         """
-        Lock conflicting manual controls while a sequence runs.
+        Lock conflicting manual controls while sequence runs.
 
         Locked:
             - Main fan
             - Smoke fan
-            - PWM controls
-            - Sensor controls
+            - PWM
+            - Sensors
             - Manual recording
-            - Manual-test metadata
+            - Metadata
 
         Still available:
+            - Live Plot
             - Smoke-machine manual logging
             - STOP ALL
         """
@@ -1929,10 +2029,7 @@ class ControlTab(QWidget):
             not self._sequence_running
         )
 
-        # -------------------------------------------------------------
         # Metadata
-        # -------------------------------------------------------------
-
         self.test_name_input.setEnabled(
             manual_enabled
         )
@@ -1945,10 +2042,7 @@ class ControlTab(QWidget):
             manual_enabled
         )
 
-        # -------------------------------------------------------------
         # Fan controls
-        # -------------------------------------------------------------
-
         self.main_fan_button.setEnabled(
             manual_enabled
         )
@@ -1965,10 +2059,7 @@ class ControlTab(QWidget):
             manual_enabled
         )
 
-        # -------------------------------------------------------------
-        # Sensor controls
-        # -------------------------------------------------------------
-
+        # Sensors
         self.sensor_1_button.setEnabled(
             manual_enabled
         )
@@ -1977,10 +2068,7 @@ class ControlTab(QWidget):
             manual_enabled
         )
 
-        # -------------------------------------------------------------
-        # Recording controls
-        # -------------------------------------------------------------
-
+        # Recording
         if self._sequence_running:
 
             self.start_recording_button.setEnabled(
@@ -2005,10 +2093,17 @@ class ControlTab(QWidget):
         # Always available
         # -------------------------------------------------------------
 
+        # Display-only graph control.
+        self.live_plot_button.setEnabled(
+            True
+        )
+
+        # Manual smoke-machine logging.
         self.smoke_machine_button.setEnabled(
             True
         )
 
+        # Safety control.
         self.stop_all_button.setEnabled(
             True
         )
@@ -2020,7 +2115,7 @@ class ControlTab(QWidget):
     def get_test_metadata(
         self,
     ) -> dict:
-        """Return metadata for a manual recording."""
+        """Return metadata for manual recording."""
 
         return {
             "test_name":

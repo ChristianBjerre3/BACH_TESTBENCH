@@ -1,17 +1,18 @@
 """
 gui/sequence_tab.py
 
-Redesigned SEQUENCE interface for the Airflow Smoke Test Bench.
+SEQUENCE interface for the Airflow Smoke Test Bench.
 
 SEQUENCE is the automatic test workflow.
 
-Existing functionality is preserved:
+Functionality:
     - Test name
     - Mount
     - Comment
     - Sensor 1 selection
     - Sensor 2 selection
     - Record sequence selection
+    - Freeze live plot when sequence ends
     - Manual smoke-machine log state
     - Timed fan sequence table
     - Add step
@@ -21,20 +22,29 @@ Existing functionality is preserved:
     - Run sequence
     - Stop sequence
 
-The sequence table contains:
+Sequence table:
     - Duration
     - Main fan ON/OFF
     - Main fan PWM
     - Smoke fan ON/OFF
     - Smoke fan PWM
 
-This module only defines GUI behavior and emits Qt signals.
-Hardware, recording and sequence execution are handled elsewhere.
+IMPORTANT:
+"Freeze live plot when sequence ends" only affects graph updates.
+
+It does NOT:
+    - Stop sensors
+    - Stop live sensor values
+    - Change CSV recording
+    - Change sequence timing
+    - Change fan control
+
+MainWindow will later read this option and handle the plotting state.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -51,7 +61,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QTextEdit,
     QCheckBox,
-    QSizePolicy,
 )
 
 import config
@@ -101,31 +110,7 @@ class SequenceTab(QWidget):
     # =================================================================
 
     def _build_ui(self) -> None:
-        """
-        Build redesigned automatic-test interface.
-
-        Layout:
-
-        ┌──────────────────────────────────────────────┐
-        │ SEQUENCE TEST INFORMATION                    │
-        └──────────────────────────────────────────────┘
-
-        ┌───────────────────────┬──────────────────────┐
-        │ MEASUREMENTS          │ SMOKE MACHINE        │
-        └───────────────────────┴──────────────────────┘
-
-        ┌──────────────────────────────────────────────┐
-        │ SEQUENCE STEPS                               │
-        │                                              │
-        │ Table                                        │
-        │                                              │
-        │ Add Step | Remove Selected | Clear           │
-        └──────────────────────────────────────────────┘
-
-        ┌──────────────────────────────────────────────┐
-        │ TOTAL / STATUS             RUN | STOP        │
-        └──────────────────────────────────────────────┘
-        """
+        """Build automatic-test interface."""
 
         main_layout = QVBoxLayout(
             self
@@ -421,7 +406,9 @@ class SequenceTab(QWidget):
     def _create_measurement_card(
         self,
     ) -> QFrame:
-        """Create sensor and recording options."""
+        """
+        Create sensor, recording and live-plot options.
+        """
 
         card = self._new_card()
 
@@ -447,7 +434,7 @@ class SequenceTab(QWidget):
         )
 
         # -------------------------------------------------------------
-        # Sensor checkboxes
+        # Sensors
         # -------------------------------------------------------------
 
         sensor_row = QHBoxLayout()
@@ -483,7 +470,7 @@ class SequenceTab(QWidget):
         )
 
         # -------------------------------------------------------------
-        # Record sequence
+        # Recording
         # -------------------------------------------------------------
 
         self.record_sequence_checkbox = QCheckBox(
@@ -498,8 +485,36 @@ class SequenceTab(QWidget):
             self.record_sequence_checkbox
         )
 
+        # -------------------------------------------------------------
+        # Freeze graph after sequence
+        # -------------------------------------------------------------
+
+        self.freeze_plot_after_sequence_checkbox = QCheckBox(
+            "Freeze live plot when sequence ends"
+        )
+
+        # Default ON:
+        # A completed experiment remains visible instead of being
+        # gradually pushed out of the rolling live graph.
+        self.freeze_plot_after_sequence_checkbox.setChecked(
+            True
+        )
+
+        self.freeze_plot_after_sequence_checkbox.setToolTip(
+            "Stops graph updates when the sequence finishes. "
+            "Sensors, live values and recording are not affected."
+        )
+
+        layout.addWidget(
+            self.freeze_plot_after_sequence_checkbox
+        )
+
+        # -------------------------------------------------------------
+        # Explanation
+        # -------------------------------------------------------------
+
         note = QLabel(
-            "Selected sensors are active during the sequence."
+            "Sensors continue measuring even if the live plot is frozen."
         )
 
         set_label_role(
@@ -523,7 +538,7 @@ class SequenceTab(QWidget):
         """
         Create manual smoke-machine log card.
 
-        The smoke machine is NOT controlled by the sequence.
+        Smoke machine is not physically controlled by sequence.
         """
 
         card = self._new_card()
@@ -743,7 +758,7 @@ class SequenceTab(QWidget):
         )
 
         # -------------------------------------------------------------
-        # Editing buttons
+        # Edit buttons
         # -------------------------------------------------------------
 
         edit_layout = QHBoxLayout()
@@ -930,7 +945,7 @@ class SequenceTab(QWidget):
     def get_test_metadata(
         self,
     ) -> dict:
-        """Return metadata entered for the sequence test."""
+        """Return metadata entered for sequence test."""
 
         return {
             "test_name":
@@ -968,10 +983,23 @@ class SequenceTab(QWidget):
     def get_record_sequence(
         self,
     ) -> bool:
-        """Return whether sequence recording is selected."""
+        """Return whether sequence should be recorded."""
 
         return (
             self.record_sequence_checkbox.isChecked()
+        )
+
+    def get_freeze_plot_after_sequence(
+        self,
+    ) -> bool:
+        """
+        Return whether live plotting should freeze when the sequence ends.
+
+        This option affects graph updates only.
+        """
+
+        return (
+            self.freeze_plot_after_sequence_checkbox.isChecked()
         )
 
     # =================================================================
@@ -1050,7 +1078,7 @@ class SequenceTab(QWidget):
         smoke_fan_active: bool = False,
         smoke_fan_pwm_percent: int = 0,
     ) -> None:
-        """Add one sequence step to the table."""
+        """Add one sequence step."""
 
         row = (
             self.sequence_table.rowCount()
@@ -1170,6 +1198,7 @@ class SequenceTab(QWidget):
         )
 
         self._refresh_step_numbers()
+
         self._update_total_duration()
 
     # =================================================================
@@ -1193,10 +1222,11 @@ class SequenceTab(QWidget):
         )
 
         self._refresh_step_numbers()
+
         self._update_total_duration()
 
     # =================================================================
-    # CLEAR STEPS
+    # CLEAR
     # =================================================================
 
     def clear_steps(
@@ -1211,7 +1241,7 @@ class SequenceTab(QWidget):
         self._update_total_duration()
 
     # =================================================================
-    # RUN SEQUENCE
+    # RUN
     # =================================================================
 
     def _on_run_sequence(
@@ -1237,7 +1267,7 @@ class SequenceTab(QWidget):
     def get_sequence_data(
         self,
     ) -> list[dict]:
-        """Return complete sequence as list of dictionaries."""
+        """Return complete sequence."""
 
         steps = []
 
@@ -1339,7 +1369,7 @@ class SequenceTab(QWidget):
     @staticmethod
     def _create_pwm_combo(
     ) -> QComboBox:
-        """Create PWM selector using config.PWM_LEVELS."""
+        """Create PWM selector."""
 
         combo = QComboBox()
 
@@ -1399,7 +1429,7 @@ class SequenceTab(QWidget):
     def _refresh_step_numbers(
         self,
     ) -> None:
-        """Update vertical table row headers."""
+        """Update table row numbers."""
 
         for row in range(
             self.sequence_table.rowCount()
@@ -1419,7 +1449,7 @@ class SequenceTab(QWidget):
     def _update_total_duration(
         self,
     ) -> None:
-        """Calculate and display total sequence duration."""
+        """Calculate total sequence duration."""
 
         total_duration = 0.0
 
@@ -1455,7 +1485,10 @@ class SequenceTab(QWidget):
         """
         Lock sequence configuration while running.
 
-        Smoke-machine logging deliberately remains available.
+        Smoke-machine manual logging remains available.
+
+        Freeze-after-sequence selection is locked while running because
+        MainWindow reads it as part of the sequence configuration.
         """
 
         self._sequence_running = bool(
@@ -1463,7 +1496,7 @@ class SequenceTab(QWidget):
         )
 
         # -------------------------------------------------------------
-        # Status display
+        # Status
         # -------------------------------------------------------------
 
         self.sequence_status_label.setText(
@@ -1539,8 +1572,12 @@ class SequenceTab(QWidget):
             not running
         )
 
+        self.freeze_plot_after_sequence_checkbox.setEnabled(
+            not running
+        )
+
         # -------------------------------------------------------------
-        # Manual smoke-machine log remains available
+        # Manual smoke-machine logging remains enabled
         # -------------------------------------------------------------
 
         self.smoke_machine_button.setEnabled(

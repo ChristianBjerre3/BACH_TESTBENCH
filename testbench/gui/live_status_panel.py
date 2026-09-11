@@ -13,6 +13,7 @@ It displays:
     - Smoke-machine manually logged state
     - Recording state and elapsed recording time
     - Sequence state and current step
+    - Live plot state
     - Compact combined Sensor 1 / Sensor 2 live plot
 
 It does NOT:
@@ -22,6 +23,7 @@ It does NOT:
     - Control sensors
     - Start or stop recording
     - Run sequences
+    - Decide whether plotting is enabled
 
 MainWindow pushes all live data into this widget.
 """
@@ -49,7 +51,6 @@ import config
 from gui.styles import (
     set_card,
     set_label_role,
-    PAGE_MARGIN,
     CARD_SPACING,
     PLOT_BACKGROUND,
     PLOT_FOREGROUND,
@@ -64,8 +65,10 @@ class LiveStatusPanel(QWidget):
     """
     Compact live-data side panel.
 
-    One instance can be used beside CONTROL and another beside SEQUENCE.
-    Both receive the same live data from MainWindow.
+    One instance is used beside CONTROL.
+    Another is used beside SEQUENCE.
+
+    Both receive the same state from MainWindow.
     """
 
     # =================================================================
@@ -100,8 +103,8 @@ class LiveStatusPanel(QWidget):
         )
 
         self.setSizePolicy(
-             QSizePolicy.Policy.Expanding,
-             QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
         )
 
         self._build_ui()
@@ -111,7 +114,7 @@ class LiveStatusPanel(QWidget):
     # =================================================================
 
     def _build_ui(self) -> None:
-        """Build redesigned compact live-status panel."""
+        """Build compact live-status panel."""
 
         layout = QVBoxLayout(
             self
@@ -129,7 +132,7 @@ class LiveStatusPanel(QWidget):
         )
 
         # -------------------------------------------------------------
-        # LIVE STATUS CARD
+        # Live status card
         # -------------------------------------------------------------
 
         self.status_card = (
@@ -141,7 +144,7 @@ class LiveStatusPanel(QWidget):
         )
 
         # -------------------------------------------------------------
-        # LIVE DATA CARD
+        # Live plot card
         # -------------------------------------------------------------
 
         self.plot_card = (
@@ -177,6 +180,7 @@ class LiveStatusPanel(QWidget):
     def _card_title(
         text: str,
     ) -> QLabel:
+        """Create card title."""
 
         label = QLabel(
             text.upper()
@@ -193,6 +197,7 @@ class LiveStatusPanel(QWidget):
     def _field_label(
         text: str,
     ) -> QLabel:
+        """Create field label."""
 
         label = QLabel(
             text
@@ -212,7 +217,7 @@ class LiveStatusPanel(QWidget):
         on_text: str = "ON",
         off_text: str = "OFF",
     ) -> None:
-        """Set state text and visual state."""
+        """Set state text and visual style."""
 
         label.setText(
             on_text
@@ -234,7 +239,7 @@ class LiveStatusPanel(QWidget):
     def _create_status_card(
         self,
     ) -> QFrame:
-        """Create the main live-status card."""
+        """Create main live-status card."""
 
         card = self._new_card()
 
@@ -285,7 +290,7 @@ class LiveStatusPanel(QWidget):
         )
 
         # -------------------------------------------------------------
-        # Sensor area
+        # Sensors
         # -------------------------------------------------------------
 
         sensor_title = QLabel(
@@ -355,7 +360,9 @@ class LiveStatusPanel(QWidget):
         )
 
         sensor_grid.addWidget(
-            self._field_label("Sensor 1"),
+            self._field_label(
+                "Sensor 1"
+            ),
             0,
             0,
         )
@@ -373,7 +380,9 @@ class LiveStatusPanel(QWidget):
         )
 
         sensor_grid.addWidget(
-            self._field_label("Sensor 2"),
+            self._field_label(
+                "Sensor 2"
+            ),
             1,
             0,
         )
@@ -413,7 +422,7 @@ class LiveStatusPanel(QWidget):
         )
 
         # -------------------------------------------------------------
-        # System area
+        # System
         # -------------------------------------------------------------
 
         system_title = QLabel(
@@ -503,6 +512,19 @@ class LiveStatusPanel(QWidget):
         )
 
         # -------------------------------------------------------------
+        # NEW: Live plot state
+        # -------------------------------------------------------------
+
+        self.live_plot_state_label = QLabel(
+            "ON"
+        )
+
+        set_label_role(
+            self.live_plot_state_label,
+            "statusOn",
+        )
+
+        # -------------------------------------------------------------
         # Rows
         # -------------------------------------------------------------
 
@@ -540,12 +562,20 @@ class LiveStatusPanel(QWidget):
             self.elapsed_time_label,
         )
 
-        self._add_status_row(
+        row = self._add_status_row(
             system_grid,
             row,
             "Sequence",
             self.sequence_state_label,
             self.sequence_step_label,
+        )
+
+        self._add_status_row(
+            system_grid,
+            row,
+            "Live plot",
+            self.live_plot_state_label,
+            None,
         )
 
         system_grid.setColumnStretch(
@@ -648,7 +678,7 @@ class LiveStatusPanel(QWidget):
     def _create_plot_card(
         self,
     ) -> QFrame:
-        """Create compact combined Sensor 1 / Sensor 2 graph."""
+        """Create combined Sensor 1 / Sensor 2 mini graph."""
 
         card = self._new_card()
 
@@ -681,17 +711,17 @@ class LiveStatusPanel(QWidget):
 
         header.addStretch()
 
-        window_label = QLabel(
+        self.plot_window_label = QLabel(
             f"Last {config.LIVE_PLOT_TIME_WINDOW_S} s"
         )
 
         set_label_role(
-            window_label,
+            self.plot_window_label,
             "muted",
         )
 
         header.addWidget(
-            window_label
+            self.plot_window_label
         )
 
         layout.addLayout(
@@ -735,7 +765,10 @@ class LiveStatusPanel(QWidget):
             QSizePolicy.Policy.Expanding,
         )
 
-        # Axis styling
+        # -------------------------------------------------------------
+        # Axes
+        # -------------------------------------------------------------
+
         for axis_name in (
             "left",
             "bottom",
@@ -757,7 +790,10 @@ class LiveStatusPanel(QWidget):
                 )
             )
 
+        # -------------------------------------------------------------
         # Legend
+        # -------------------------------------------------------------
+
         legend = self.plot.addLegend(
             offset=(8, 8)
         )
@@ -767,7 +803,7 @@ class LiveStatusPanel(QWidget):
         )
 
         # -------------------------------------------------------------
-        # Sensor curves
+        # Curves
         # -------------------------------------------------------------
 
         self.sensor_1_curve = self.plot.plot(
@@ -805,7 +841,7 @@ class LiveStatusPanel(QWidget):
         sensor_2_active: bool,
         sensor_2_voltage: Optional[float],
     ) -> None:
-        """Update sensor state and voltage labels."""
+        """Update sensor states and voltage labels."""
 
         self._set_state_label(
             self.sensor_1_state_label,
@@ -844,7 +880,7 @@ class LiveStatusPanel(QWidget):
         smoke_fan_active: bool,
         smoke_fan_pwm_percent: int,
     ) -> None:
-        """Update fan states and commanded PWM values."""
+        """Update fan states and commanded PWM."""
 
         self._set_state_label(
             self.main_fan_state_label,
@@ -880,9 +916,6 @@ class LiveStatusPanel(QWidget):
         Update recording, smoke-machine and sequence state.
 
         elapsed_time_s remains recording elapsed time.
-
-        It is intentionally separate from the GUI live-time value
-        supplied to add_plot_sample().
         """
 
         # -------------------------------------------------------------
@@ -958,6 +991,56 @@ class LiveStatusPanel(QWidget):
             )
 
     # =================================================================
+    # LIVE PLOT STATE
+    # =================================================================
+
+    def update_live_plot_status(
+        self,
+        enabled: bool,
+    ) -> None:
+        """
+        Update display-only Live Plot status.
+
+        enabled=True:
+            Graph is receiving new samples.
+
+        enabled=False:
+            Graph is frozen.
+
+        Sensor measurements and recording are unaffected.
+        """
+
+        if enabled:
+
+            self.live_plot_state_label.setText(
+                "ON"
+            )
+
+            set_label_role(
+                self.live_plot_state_label,
+                "statusOn",
+            )
+
+            self.plot_window_label.setText(
+                f"Last {config.LIVE_PLOT_TIME_WINDOW_S} s"
+            )
+
+        else:
+
+            self.live_plot_state_label.setText(
+                "FROZEN"
+            )
+
+            set_label_role(
+                self.live_plot_state_label,
+                "statusOff",
+            )
+
+            self.plot_window_label.setText(
+                "Frozen"
+            )
+
+    # =================================================================
     # PUBLIC PLOT UPDATE
     # =================================================================
 
@@ -968,10 +1051,12 @@ class LiveStatusPanel(QWidget):
         sensor_2_voltage: Optional[float],
     ) -> None:
         """
-        Add one sample to the compact live graph.
+        Add one sample to compact live graph.
 
-        live_time_s is supplied by MainWindow and is intentionally
-        separate from recording elapsed time.
+        MainWindow decides whether this method should be called.
+
+        Therefore this widget does not itself decide whether plotting
+        is enabled or frozen.
         """
 
         self._time_data.append(
@@ -1023,7 +1108,7 @@ class LiveStatusPanel(QWidget):
         )
 
         # -------------------------------------------------------------
-        # Keep graph focused on configured live window
+        # Rolling X window
         # -------------------------------------------------------------
 
         if times:
@@ -1061,7 +1146,6 @@ class LiveStatusPanel(QWidget):
         self.sensor_1_curve.clear()
         self.sensor_2_curve.clear()
 
-        # Visually return the graph to its initial time range.
         self.plot.setXRange(
             0.0,
             min(
