@@ -35,6 +35,7 @@ from typing import Optional
 import pyqtgraph as pg
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -392,6 +393,40 @@ class LiveTab(QWidget):
             420
         )
 
+        self.camera_preview_label = QLabel(
+            "CAMERA OFF"
+        )
+
+        self.camera_preview_label.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+
+        self.camera_preview_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+
+        self.camera_preview_label.setMinimumHeight(
+            160
+        )
+
+        self.camera_preview_label.setMaximumHeight(
+            260
+        )
+
+        self.camera_preview_label.setStyleSheet(
+            """
+            QLabel {
+                background-color: #0A1825;
+                border: 1px solid #243A4D;
+                border-radius: 8px;
+                color: #7F91A3;
+                margin: 0px;
+                padding: 0px;
+            }
+            """
+        )
+
         # -------------------------------------------------------------
         # Axis appearance
         # -------------------------------------------------------------
@@ -466,6 +501,11 @@ class LiveTab(QWidget):
         layout.addWidget(
             self.plot,
             stretch=1,
+        )
+
+        layout.addWidget(
+            self.camera_preview_label,
+            stretch=0,
         )
 
         return card
@@ -1317,6 +1357,55 @@ class LiveTab(QWidget):
     # =================================================================
     # CLEAR PLOTS
     # =================================================================
+
+    def set_camera_preview(
+        self,
+        frame,
+        available: bool,
+    ) -> None:
+        """Display the current camera preview or a neutral placeholder without resizing layout."""
+
+        empty_pixmap = QPixmap()
+
+        if frame is None:
+            self.camera_preview_label.setPixmap(empty_pixmap)
+            self.camera_preview_label.setText("CAMERA OFF")
+            return
+
+        if not available:
+            self.camera_preview_label.setPixmap(empty_pixmap)
+            self.camera_preview_label.setText("CAMERA OFF")
+            return
+
+        try:
+            import cv2
+
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb.shape
+            bytes_per_line = ch * w
+
+            qimage = QImage(
+                rgb.data,
+                w,
+                h,
+                bytes_per_line,
+                QImage.Format.Format_RGB888,
+            )
+            pixmap = QPixmap.fromImage(qimage)
+            target_size = self.camera_preview_label.size()
+            if target_size.width() <= 1 or target_size.height() <= 1:
+                target_size = self.camera_preview_label.sizeHint()
+
+            scaled = pixmap.scaled(
+                target_size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self.camera_preview_label.setPixmap(scaled)
+            self.camera_preview_label.setText("")
+        except Exception:
+            self.camera_preview_label.setText("CAMERA NOT AVAILABLE")
+            self.camera_preview_label.setPixmap(empty_pixmap)
 
     def clear_plots(
         self,

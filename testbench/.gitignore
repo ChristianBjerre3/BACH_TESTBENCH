@@ -15,10 +15,8 @@ venv/
 env/
 ENV/
 
-# Generated experiment / CSV test data
-data/*.csv
-data/**/*.csv
-!data/.gitkeep
+# Generated experiment data
+data/
 
 # Sequence working copies if generated at runtime (keep folder)
 # sequences/*.json  # uncomment if sequences become generated artefacts

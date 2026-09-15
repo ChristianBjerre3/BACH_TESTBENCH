@@ -205,6 +205,7 @@ MIN_SEQUENCE_STEP_DURATION_S = 0.1
 DATA_DIRECTORY = "data"
 
 CSV_FILE_EXTENSION = ".csv"
+VIDEO_FILE_EXTENSION = ".mp4"
 
 # Default delimiter chosen for easy processing in Python,
 # MATLAB, R, Excel, etc.
@@ -212,6 +213,17 @@ CSV_DELIMITER = ";"
 
 # Time format used for readable timestamps
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
+
+# USB camera defaults
+DEFAULT_CAMERA_ENABLED = False
+DEFAULT_CAMERA_RECORD_VIDEO = False
+DEFAULT_CAMERA_RESOLUTION = (1920, 1080)
+DEFAULT_CAMERA_PREVIEW_SIZE = (640, 360)
+DEFAULT_CAMERA_TARGET_FPS = 30
+
+CAMERA_NOT_AVAILABLE_TEXT = "NOT AVAILABLE"
+CAMERA_OFF_TEXT = "OFF"
+CAMERA_ON_TEXT = "CONNECTED"
 
 
 # ============================================================

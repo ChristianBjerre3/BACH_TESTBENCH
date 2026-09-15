@@ -485,6 +485,18 @@ class SequenceTab(QWidget):
             self.record_sequence_checkbox
         )
 
+        self.record_video_checkbox = QCheckBox(
+            "Record video"
+        )
+
+        self.record_video_checkbox.setChecked(
+            False
+        )
+
+        layout.addWidget(
+            self.record_video_checkbox
+        )
+
         # -------------------------------------------------------------
         # Freeze graph after sequence
         # -------------------------------------------------------------
@@ -987,6 +999,15 @@ class SequenceTab(QWidget):
 
         return (
             self.record_sequence_checkbox.isChecked()
+        )
+
+    def get_record_video(
+        self,
+    ) -> bool:
+        """Return whether the sequence should also capture video."""
+
+        return (
+            self.record_video_checkbox.isChecked()
         )
 
     def get_freeze_plot_after_sequence(
