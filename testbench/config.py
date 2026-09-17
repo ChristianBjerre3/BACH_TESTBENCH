@@ -34,7 +34,7 @@ APP_VERSION = "0.1.0"
 VALID_HARDWARE_MODES = ("simulation", "real")
 
 # Keep simulation until physical hardware has been verified.
-HARDWARE_MODE = "simulation"
+HARDWARE_MODE = "real"
 
 
 # ============================================================
