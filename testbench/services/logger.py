@@ -100,6 +100,24 @@ class DataLogger:
         self._events_path: Optional[Path] = None
 
         # ------------------------------------------------------------
+        # Video file
+        # ------------------------------------------------------------
+
+        self._video_path: Optional[Path] = None
+        self._base_name: Optional[str] = None
+
+        # ------------------------------------------------------------
+        # Camera metadata state
+        # ------------------------------------------------------------
+
+        self._camera_available = False
+        self._camera_index = None
+        self._camera_auto_exposure = None
+        self._camera_exposure = None
+        self._camera_gain = None
+        self._video_recorded = False
+
+        # ------------------------------------------------------------
         # State
         # ------------------------------------------------------------
 
@@ -158,6 +176,7 @@ class DataLogger:
         # ------------------------------------------------------------
 
         base_name = self._create_base_filename()
+        self._base_name = base_name
 
         self._csv_path = (
             self.data_directory
@@ -172,6 +191,11 @@ class DataLogger:
         self._events_path = (
             self.data_directory
             / f"{base_name}_events.csv"
+        )
+
+        self._video_path = (
+            self.data_directory
+            / f"{base_name}_video{config.VIDEO_FILE_EXTENSION}"
         )
 
         try:
@@ -431,6 +455,60 @@ class DataLogger:
 
         return self._events_path
 
+    def get_video_path(
+        self,
+    ) -> Optional[Path]:
+        """Return path of current/latest associated video file."""
+
+        return self._video_path
+
+    def build_video_path(
+        self,
+        base_name: Optional[str] = None,
+    ) -> Path:
+        """Build the companion MP4 path using the same base name as CSV."""
+
+        if base_name is None:
+            if self._base_name is not None:
+                base_name = self._base_name
+            else:
+                base_name = self._create_base_filename()
+
+        return (
+            self.data_directory
+            / f"{base_name}_video{config.VIDEO_FILE_EXTENSION}"
+        )
+
+    def set_camera_available(
+        self,
+        available: bool,
+    ) -> None:
+        """Store the last known camera availability for metadata output."""
+
+        self._camera_available = bool(available)
+
+    def set_camera_metadata(
+        self,
+        *,
+        camera_index: Optional[int] = None,
+        camera_auto_exposure: Optional[bool] = None,
+        camera_exposure: Optional[int] = None,
+        camera_gain: Optional[int] = None,
+        video_recorded: Optional[bool] = None,
+    ) -> None:
+        """Record the currently applied camera configuration for metadata output."""
+
+        if camera_index is not None:
+            self._camera_index = int(camera_index)
+        if camera_auto_exposure is not None:
+            self._camera_auto_exposure = bool(camera_auto_exposure)
+        if camera_exposure is not None:
+            self._camera_exposure = int(camera_exposure)
+        if camera_gain is not None:
+            self._camera_gain = int(camera_gain)
+        if video_recorded is not None:
+            self._video_recorded = bool(video_recorded)
+
     # =================================================================
     # METADATA
     # =================================================================
@@ -471,6 +549,33 @@ class DataLogger:
                     if self._events_path is not None
                     else None
                 ),
+
+                "video_file": (
+                    self._video_path.name
+                    if self._video_path is not None
+                    else None
+                ),
+
+                "video_recorded":
+                    bool(
+                        self._video_recorded
+                        or (self._video_path is not None and self._video_path.exists())
+                    ),
+
+                "camera_index":
+                    self._camera_index,
+
+                "camera_auto_exposure":
+                    self._camera_auto_exposure,
+
+                "camera_exposure":
+                    self._camera_exposure,
+
+                "camera_gain":
+                    self._camera_gain,
+
+                "camera_available":
+                    bool(self._camera_available),
 
                 "recording_active":
                     self.session.is_recording(),

@@ -8,8 +8,8 @@ This tab is display-only.
 It displays:
     - Sensor 1 state and live voltage
     - Sensor 2 state and live voltage
-    - Main fan state and commanded PWM
-    - Smoke fan state and commanded PWM
+    - Main fan state, commanded PWM and measured RPM
+    - Smoke fan state, commanded PWM and measured RPM
     - Smoke-machine manually logged state
     - Recording state and elapsed recording time
     - Sequence state and current sequence step
@@ -35,6 +35,7 @@ from typing import Optional
 import pyqtgraph as pg
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -95,6 +96,9 @@ class LiveTab(QWidget):
         self._sensor_2_data = deque(
             maxlen=max_points
         )
+
+        self._main_rpm_data = deque(maxlen=max_points)
+        self._smoke_rpm_data = deque(maxlen=max_points)
 
         # Graphics objects used for sequence-step markers.
         self._sequence_markers = []
@@ -392,6 +396,40 @@ class LiveTab(QWidget):
             420
         )
 
+        self.camera_preview_label = QLabel(
+            "CAMERA OFF"
+        )
+
+        self.camera_preview_label.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+
+        self.camera_preview_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+
+        self.camera_preview_label.setMinimumHeight(
+            160
+        )
+
+        self.camera_preview_label.setMaximumHeight(
+            260
+        )
+
+        self.camera_preview_label.setStyleSheet(
+            """
+            QLabel {
+                background-color: #0A1825;
+                border: 1px solid #243A4D;
+                border-radius: 8px;
+                color: #7F91A3;
+                margin: 0px;
+                padding: 0px;
+            }
+            """
+        )
+
         # -------------------------------------------------------------
         # Axis appearance
         # -------------------------------------------------------------
@@ -466,6 +504,29 @@ class LiveTab(QWidget):
         layout.addWidget(
             self.plot,
             stretch=1,
+        )
+
+        # Dedicated RPM plot uses its own axis (RPM, never mixed with volts).
+        self.rpm_plot = pg.PlotWidget()
+        self.rpm_plot.setBackground(PLOT_BACKGROUND)
+        self.rpm_plot.setLabel("left", "Fan speed", units="RPM")
+        self.rpm_plot.setLabel("bottom", "Time", units="s")
+        self.rpm_plot.showGrid(x=True, y=True, alpha=PLOT_GRID_ALPHA)
+        self.rpm_plot.setMinimumHeight(130)
+        self.rpm_plot.addLegend(offset=(10, 10))
+        self.main_fan_rpm_curve = self.rpm_plot.plot(
+            pen=pg.mkPen(SENSOR_1_COLOR, width=PLOT_LINE_WIDTH),
+            name="Main fan RPM", connect="finite",
+        )
+        self.smoke_fan_rpm_curve = self.rpm_plot.plot(
+            pen=pg.mkPen(SENSOR_2_COLOR, width=PLOT_LINE_WIDTH),
+            name="Smoke fan RPM", connect="finite",
+        )
+        layout.addWidget(self.rpm_plot, stretch=0)
+
+        layout.addWidget(
+            self.camera_preview_label,
+            stretch=0,
         )
 
         return card
@@ -704,6 +765,12 @@ class LiveTab(QWidget):
             Qt.AlignmentFlag.AlignRight
         )
 
+        self.main_fan_rpm_label = QLabel("-- RPM")
+        self.smoke_fan_rpm_label = QLabel("-- RPM")
+        for label in (self.main_fan_rpm_label, self.smoke_fan_rpm_label):
+            label.setAlignment(Qt.AlignmentFlag.AlignRight)
+
+
         # -------------------------------------------------------------
         # Smoke machine
         # -------------------------------------------------------------
@@ -751,11 +818,19 @@ class LiveTab(QWidget):
         )
 
         row = self._add_status_row(
+            grid, row, "Main fan measured", QLabel("FG"), self.main_fan_rpm_label,
+        )
+
+        row = self._add_status_row(
             grid,
             row,
             "Smoke fan",
             self.smoke_fan_state_label,
             self.smoke_fan_pwm_label,
+        )
+
+        row = self._add_status_row(
+            grid, row, "Smoke fan measured", QLabel("FG"), self.smoke_fan_rpm_label,
         )
 
         row = self._add_status_row(
@@ -998,8 +1073,10 @@ class LiveTab(QWidget):
         main_fan_pwm_percent: int,
         smoke_fan_active: bool,
         smoke_fan_pwm_percent: int,
+        main_fan_rpm: Optional[float] = None,
+        smoke_fan_rpm: Optional[float] = None,
     ) -> None:
-        """Update fan state and commanded PWM displays."""
+        """Update commanded fan state and independently measured RPM."""
 
         self._set_state_label(
             self.main_fan_state_label,
@@ -1018,6 +1095,9 @@ class LiveTab(QWidget):
         self.smoke_fan_pwm_label.setText(
             f"{int(smoke_fan_pwm_percent)} %"
         )
+
+        self.main_fan_rpm_label.setText(self._format_rpm(main_fan_rpm))
+        self.smoke_fan_rpm_label.setText(self._format_rpm(smoke_fan_rpm))
 
     # =================================================================
     # EXPERIMENT STATUS
@@ -1132,6 +1212,8 @@ class LiveTab(QWidget):
         live_time_s: float,
         sensor_1_voltage: Optional[float],
         sensor_2_voltage: Optional[float],
+        main_fan_rpm: Optional[float] = None,
+        smoke_fan_rpm: Optional[float] = None,
     ) -> None:
         """
         Add one sample to the combined graph.
@@ -1172,6 +1254,14 @@ class LiveTab(QWidget):
                 float(sensor_2_voltage)
             )
 
+        # Separate RPM history: missing FG readings become plot gaps.
+        self._main_rpm_data.append(
+            float(main_fan_rpm) if main_fan_rpm is not None else float("nan")
+        )
+        self._smoke_rpm_data.append(
+            float(smoke_fan_rpm) if smoke_fan_rpm is not None else float("nan")
+        )
+
         times = list(
             self._time_data
         )
@@ -1189,6 +1279,9 @@ class LiveTab(QWidget):
                 self._sensor_2_data
             ),
         )
+
+        self.main_fan_rpm_curve.setData(times, list(self._main_rpm_data))
+        self.smoke_fan_rpm_curve.setData(times, list(self._smoke_rpm_data))
 
         # -------------------------------------------------------------
         # Maintain configured rolling X window
@@ -1211,6 +1304,9 @@ class LiveTab(QWidget):
                     earliest_visible + 1.0,
                 ),
                 padding=0.0,
+            )
+            self.rpm_plot.setXRange(
+                earliest_visible, max(latest_time, earliest_visible + 1.0), padding=0.0,
             )
 
     # =================================================================
@@ -1318,6 +1414,55 @@ class LiveTab(QWidget):
     # CLEAR PLOTS
     # =================================================================
 
+    def set_camera_preview(
+        self,
+        frame,
+        available: bool,
+    ) -> None:
+        """Display the current camera preview or a neutral placeholder without resizing layout."""
+
+        empty_pixmap = QPixmap()
+
+        if frame is None:
+            self.camera_preview_label.setPixmap(empty_pixmap)
+            self.camera_preview_label.setText("CAMERA OFF")
+            return
+
+        if not available:
+            self.camera_preview_label.setPixmap(empty_pixmap)
+            self.camera_preview_label.setText("CAMERA OFF")
+            return
+
+        try:
+            import cv2
+
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb.shape
+            bytes_per_line = ch * w
+
+            qimage = QImage(
+                rgb.data,
+                w,
+                h,
+                bytes_per_line,
+                QImage.Format.Format_RGB888,
+            )
+            pixmap = QPixmap.fromImage(qimage)
+            target_size = self.camera_preview_label.size()
+            if target_size.width() <= 1 or target_size.height() <= 1:
+                target_size = self.camera_preview_label.sizeHint()
+
+            scaled = pixmap.scaled(
+                target_size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self.camera_preview_label.setPixmap(scaled)
+            self.camera_preview_label.setText("")
+        except Exception:
+            self.camera_preview_label.setText("CAMERA NOT AVAILABLE")
+            self.camera_preview_label.setPixmap(empty_pixmap)
+
     def clear_plots(
         self,
     ) -> None:
@@ -1339,6 +1484,10 @@ class LiveTab(QWidget):
         self._time_data.clear()
         self._sensor_1_data.clear()
         self._sensor_2_data.clear()
+        self._main_rpm_data.clear()
+        self._smoke_rpm_data.clear()
+        self.main_fan_rpm_curve.clear()
+        self.smoke_fan_rpm_curve.clear()
 
         self.sensor_1_curve.clear()
         self.sensor_2_curve.clear()
@@ -1379,6 +1528,9 @@ class LiveTab(QWidget):
             ),
             padding=0.0,
         )
+        self.rpm_plot.setXRange(
+            0.0, min(10.0, float(config.LIVE_PLOT_TIME_WINDOW_S)), padding=0.0,
+        )
 
     # =================================================================
     # VOLTAGE FORMAT
@@ -1394,3 +1546,10 @@ class LiveTab(QWidget):
             return "-- V"
 
         return f"{float(voltage):.3f} V"
+
+    @staticmethod
+    def _format_rpm(rpm: Optional[float]) -> str:
+        """Unknown measurement remains unknown, never a fabricated zero."""
+        if rpm is None:
+            return "-- RPM"
+        return f"{float(rpm):,.0f} RPM".replace(",", " ")

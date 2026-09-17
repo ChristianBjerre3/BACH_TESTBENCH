@@ -208,6 +208,17 @@ class MainWindow(QMainWindow):
         self._recording_started_by_sequence = False
 
         # -------------------------------------------------------------
+        # Camera state
+        # -------------------------------------------------------------
+
+        self.camera = None
+        self._camera_enabled = False
+        self._camera_record_video = False
+        self._camera_preview_frame = None
+        self._camera_recording_active = False
+        self._camera_error_logged = False
+
+        # -------------------------------------------------------------
         # Application state
         # -------------------------------------------------------------
 
@@ -247,6 +258,8 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
 
+        self._initialize_camera()
+
         self._connect_signals()
 
         # -------------------------------------------------------------
@@ -268,7 +281,20 @@ class MainWindow(QMainWindow):
     def _initialize_hardware(
         self,
     ) -> None:
-        """Initialize real or simulated hardware."""
+        """
+        Initialize real or simulated hardware.
+
+        Real mode:
+            - Two fan controllers
+            - Two FG/RPM monitors
+            - ADS1115
+            - Two logical LED interfaces
+            - Two optical sensors
+
+        Simulation mode:
+            - Existing simulation backends
+            - No physical FG monitoring
+        """
 
         (
             FanController,
@@ -277,9 +303,9 @@ class MainWindow(QMainWindow):
             OpticalSensor,
         ) = _load_hardware_backend()
 
-        # -------------------------------------------------------------
-        # Fans
-        # -------------------------------------------------------------
+        # --------------------------------------------------------
+        # FAN CONTROLLERS
+        # --------------------------------------------------------
 
         self.main_fan = FanController(
             gpio_pin=config.MAIN_FAN_PWM_GPIO,
@@ -291,15 +317,36 @@ class MainWindow(QMainWindow):
             name="Smoke Fan",
         )
 
-        # -------------------------------------------------------------
+        # --------------------------------------------------------
+        # RPM MONITORS
+        # --------------------------------------------------------
+
+        self.main_fan_rpm_monitor = None
+        self.smoke_fan_rpm_monitor = None
+
+        if config.HARDWARE_MODE == "real":
+
+            from hardware.fan_rpm import FanRPMMonitor
+
+            self.main_fan_rpm_monitor = FanRPMMonitor(
+                gpio_pin=config.MAIN_FAN_FG_GPIO,
+                name="Main Fan",
+            )
+
+            self.smoke_fan_rpm_monitor = FanRPMMonitor(
+                gpio_pin=config.SMOKE_FAN_FG_GPIO,
+                name="Smoke Fan",
+            )
+
+        # --------------------------------------------------------
         # ADC
-        # -------------------------------------------------------------
+        # --------------------------------------------------------
 
         self.adc = ADCController()
 
-        # -------------------------------------------------------------
-        # LEDs
-        # -------------------------------------------------------------
+        # --------------------------------------------------------
+        # LED INTERFACES
+        # --------------------------------------------------------
 
         self.sensor_1_led = LEDController(
             gpio_pin=config.SENSOR_1_LED_GPIO,
@@ -311,9 +358,9 @@ class MainWindow(QMainWindow):
             name="Sensor 2 LED",
         )
 
-        # -------------------------------------------------------------
-        # Optical sensors
-        # -------------------------------------------------------------
+        # --------------------------------------------------------
+        # OPTICAL SENSORS
+        # --------------------------------------------------------
 
         self.sensor_1 = OpticalSensor(
             adc=self.adc,
@@ -332,6 +379,48 @@ class MainWindow(QMainWindow):
     # =================================================================
     # GUI
     # =================================================================
+
+    def _initialize_camera(
+        self,
+    ) -> None:
+        """Create the independent OpenCV USB camera backend."""
+
+        try:
+            from hardware.camera import CameraController
+        except Exception:
+            from simulation.camera import CameraController
+
+        self.camera = CameraController(
+            camera_index=0,
+            preview_size=config.DEFAULT_CAMERA_PREVIEW_SIZE,
+            target_fps=config.DEFAULT_CAMERA_TARGET_FPS,
+        )
+
+        self.control_tab.set_camera_source_options(
+            self.camera.available_devices()
+        )
+
+        self._camera_enabled = False
+        self._camera_record_video = False
+        self._camera_recording_active = False
+        self._camera_preview_frame = None
+        self._camera_error_logged = False
+
+        self.logger.set_camera_available(
+            self.camera.is_available()
+        )
+        self.control_tab.set_auto_exposure_enabled(
+            self.camera.get_auto_exposure() if self.camera.supports_auto_exposure() else False,
+            supported=self.camera.supports_auto_exposure(),
+        )
+        self.control_tab.set_exposure_value(
+            self.camera.get_exposure() if self.camera.supports_exposure() else None,
+            supported=self.camera.supports_exposure(),
+        )
+        self.control_tab.set_gain_value(
+            self.camera.get_gain() if self.camera.supports_gain() else None,
+            supported=self.camera.supports_gain(),
+        )
 
     def _build_ui(
         self,
@@ -600,6 +689,30 @@ class MainWindow(QMainWindow):
             self._stop_recording
         )
 
+        self.control_tab.camera_enabled_changed.connect(
+            self._set_camera_enabled
+        )
+
+        self.control_tab.camera_source_changed.connect(
+            self._set_camera_source
+        )
+
+        self.control_tab.auto_exposure_changed.connect(
+            self._set_camera_auto_exposure
+        )
+
+        self.control_tab.exposure_changed.connect(
+            self._set_camera_exposure
+        )
+
+        self.control_tab.gain_changed.connect(
+            self._set_camera_gain
+        )
+
+        self.control_tab.record_video_changed.connect(
+            self._set_record_video
+        )
+
         # -------------------------------------------------------------
         # Live plot
         # -------------------------------------------------------------
@@ -758,6 +871,12 @@ class MainWindow(QMainWindow):
             )
 
             # ---------------------------------------------------------
+            # Camera preview / recording loop
+            # ---------------------------------------------------------
+
+            self._update_camera_state()
+
+            # ---------------------------------------------------------
             # Store latest sensor measurements
             # ---------------------------------------------------------
 
@@ -768,6 +887,25 @@ class MainWindow(QMainWindow):
             self.session.set_sensor_2_voltage(
                 sensor_2_voltage
             )
+
+            # ---------------------------------------------------------
+            # Read measured fan RPM before CSV logging and GUI refresh.
+            # Simulation has no physical FG signal: keep values unknown.
+            # ---------------------------------------------------------
+
+            main_rpm = (
+                self.main_fan_rpm_monitor.get_rpm()
+                if self.main_fan_rpm_monitor is not None
+                else None
+            )
+            smoke_rpm = (
+                self.smoke_fan_rpm_monitor.get_rpm()
+                if self.smoke_fan_rpm_monitor is not None
+                else None
+            )
+
+            self.session.set_main_fan_rpm(main_rpm)
+            self.session.set_smoke_fan_rpm(smoke_rpm)
 
             # ---------------------------------------------------------
             # Time-series recording
@@ -801,6 +939,8 @@ class MainWindow(QMainWindow):
                     live_time_s=live_time_s,
                     sensor_1_voltage=sensor_1_voltage,
                     sensor_2_voltage=sensor_2_voltage,
+                    main_fan_rpm=self.session.main_fan_rpm,
+                    smoke_fan_rpm=self.session.smoke_fan_rpm,
                 )
 
                 # CONTROL side graph
@@ -822,6 +962,329 @@ class MainWindow(QMainWindow):
             self._handle_runtime_error(
                 exc
             )
+
+    # =================================================================
+    # CAMERA CONTROL
+    # =================================================================
+
+    def _set_camera_enabled(
+        self,
+        enabled: bool,
+    ) -> None:
+        """Toggle the camera on or off without impacting sensor sampling or CSV logging."""
+
+        enabled = bool(enabled)
+        self._camera_enabled = enabled
+
+        if enabled:
+            source_index = self.control_tab.get_camera_source_index()
+            available = self.camera.open(source_index)
+            self.logger.set_camera_available(available)
+            if not available:
+                self._camera_enabled = False
+                self.control_tab.set_camera_state(False, config.CAMERA_NOT_AVAILABLE_TEXT)
+                self.live_tab.set_camera_preview(None, False)
+                self._camera_preview_frame = None
+                self._camera_error_logged = False
+                return
+
+            self.camera.refresh_camera_settings()
+            self._camera_preview_frame = self.camera.get_preview_frame()
+            self.control_tab.set_camera_state(True, config.CAMERA_ON_TEXT)
+            self.control_tab.set_auto_exposure_enabled(
+                self.camera.get_auto_exposure() if self.camera.supports_auto_exposure() else False,
+                supported=self.camera.supports_auto_exposure(),
+            )
+            self.control_tab.set_exposure_value(
+                self.camera.get_exposure() if self.camera.supports_exposure() else None,
+                supported=self.camera.supports_exposure(),
+            )
+            self.control_tab.set_gain_value(
+                self.camera.get_gain() if self.camera.supports_gain() else None,
+                supported=self.camera.supports_gain(),
+            )
+            self.logger.set_camera_metadata(
+                camera_index=self.camera.camera_index,
+                camera_auto_exposure=self.camera.get_auto_exposure() if self.camera.supports_auto_exposure() else None,
+                camera_exposure=self.camera.get_exposure() if self.camera.supports_exposure() else None,
+                camera_gain=self.camera.get_gain() if self.camera.supports_gain() else None,
+            )
+            self._camera_error_logged = False
+            return
+
+        self._stop_camera_video()
+        self._camera_preview_frame = None
+        self._camera_enabled = False
+        self.camera.close()
+        self.logger.set_camera_available(False)
+        self.control_tab.set_camera_state(False, config.CAMERA_OFF_TEXT)
+        self.control_tab.set_auto_exposure_enabled(False, supported=False)
+        self.control_tab.set_exposure_value(None, supported=False)
+        self.control_tab.set_gain_value(None, supported=False)
+        self.live_tab.set_camera_preview(None, False)
+
+    def _set_camera_source(
+        self,
+        camera_index: int,
+    ) -> None:
+        """Select or switch camera source safely.
+
+        Selecting a source while Camera is OFF only changes the preferred
+        index; it must not silently open the webcam.
+        """
+
+        try:
+            selected_index = int(camera_index)
+            if self.camera is None:
+                return
+
+            if not self._camera_enabled:
+                self.camera.camera_index = selected_index
+                self.logger.set_camera_metadata(camera_index=selected_index)
+                return
+
+            switched = self.camera.set_camera_index(selected_index)
+            if not switched:
+                self._camera_enabled = False
+                self.control_tab.set_camera_state(False, config.CAMERA_NOT_AVAILABLE_TEXT)
+                self.control_tab.set_auto_exposure_enabled(False, supported=False)
+                self.control_tab.set_exposure_value(None, supported=False)
+                self.control_tab.set_gain_value(None, supported=False)
+                self.live_tab.set_camera_preview(None, False)
+                self.logger.set_camera_available(False)
+                return
+
+            self.camera.refresh_camera_settings()
+            self._camera_preview_frame = self.camera.get_preview_frame()
+            self.control_tab.set_camera_state(True, config.CAMERA_ON_TEXT)
+            self.control_tab.set_auto_exposure_enabled(
+                self.camera.get_auto_exposure() or False,
+                supported=self.camera.supports_auto_exposure(),
+            )
+            self.control_tab.set_exposure_value(
+                self.camera.get_exposure(),
+                supported=self.camera.supports_exposure(),
+            )
+            self.control_tab.set_gain_value(
+                self.camera.get_gain(),
+                supported=self.camera.supports_gain(),
+            )
+            self.logger.set_camera_available(True)
+            self.logger.set_camera_metadata(
+                camera_index=self.camera.camera_index,
+                camera_auto_exposure=self.camera.get_auto_exposure(),
+                camera_exposure=self.camera.get_exposure(),
+                camera_gain=self.camera.get_gain(),
+            )
+        except Exception:
+            self._camera_enabled = False
+            self.control_tab.set_camera_state(False, config.CAMERA_NOT_AVAILABLE_TEXT)
+            self.control_tab.set_auto_exposure_enabled(False, supported=False)
+            self.control_tab.set_exposure_value(None, supported=False)
+            self.control_tab.set_gain_value(None, supported=False)
+            self.live_tab.set_camera_preview(None, False)
+            self.logger.set_camera_available(False)
+
+    def _set_camera_auto_exposure(
+        self,
+        enabled: bool,
+    ) -> None:
+        """Apply auto exposure and synchronize GUI to driver readback."""
+
+        if self.camera is None or not self._camera_enabled:
+            return
+
+        try:
+            supported = self.camera.supports_auto_exposure()
+            if not supported:
+                self.control_tab.set_auto_exposure_enabled(False, supported=False)
+                return
+
+            self.camera.set_auto_exposure(bool(enabled))
+            self.camera.refresh_camera_settings()
+
+            actual_auto = self.camera.get_auto_exposure()
+            self.control_tab.set_auto_exposure_enabled(
+                bool(actual_auto) if actual_auto is not None else False,
+                supported=True,
+            )
+            self.control_tab.set_exposure_value(
+                self.camera.get_exposure(),
+                supported=self.camera.supports_exposure(),
+            )
+            self.control_tab.set_gain_value(
+                self.camera.get_gain(),
+                supported=self.camera.supports_gain(),
+            )
+            self.logger.set_camera_metadata(
+                camera_auto_exposure=actual_auto,
+                camera_exposure=self.camera.get_exposure(),
+                camera_gain=self.camera.get_gain(),
+            )
+        except Exception:
+            # Camera settings are non-critical; keep the rest of the testbench alive.
+            pass
+
+    def _set_camera_exposure(
+        self,
+        value: int,
+    ) -> None:
+        """Apply a manual exposure value and show the driver's actual value."""
+
+        if self.camera is None or not self._camera_enabled:
+            return
+
+        try:
+            supported = self.camera.supports_exposure()
+            if not supported:
+                self.control_tab.set_exposure_value(None, supported=False)
+                return
+
+            self.camera.set_exposure(int(value))
+            actual = self.camera.get_exposure()
+            self.control_tab.set_exposure_value(actual, supported=True)
+            self.logger.set_camera_metadata(
+                camera_auto_exposure=self.camera.get_auto_exposure(),
+                camera_exposure=actual,
+                camera_gain=self.camera.get_gain(),
+            )
+        except Exception:
+            pass
+
+    def _set_camera_gain(
+        self,
+        value: int,
+    ) -> None:
+        """Apply a manual gain value and show the driver's actual value."""
+
+        if self.camera is None or not self._camera_enabled:
+            return
+
+        try:
+            supported = self.camera.supports_gain()
+            if not supported:
+                self.control_tab.set_gain_value(None, supported=False)
+                return
+
+            self.camera.set_gain(int(value))
+            actual = self.camera.get_gain()
+            self.control_tab.set_gain_value(actual, supported=True)
+            self.logger.set_camera_metadata(
+                camera_auto_exposure=self.camera.get_auto_exposure(),
+                camera_exposure=self.camera.get_exposure(),
+                camera_gain=actual,
+            )
+        except Exception:
+            pass
+
+    def _set_record_video(
+        self,
+        enabled: bool,
+    ) -> None:
+        """Set whether the next manual/sequence recording should include video."""
+
+        self._camera_record_video = bool(enabled)
+
+    def _update_camera_state(
+        self,
+    ) -> None:
+        """Refresh preview/status only. Video writing is worker-owned."""
+
+        if not self._camera_enabled:
+            self.live_tab.set_camera_preview(None, False)
+            return
+
+        if self.camera is None:
+            self.live_tab.set_camera_preview(None, False)
+            return
+
+        try:
+            frame = self.camera.get_preview_frame()
+            available = self.camera.is_available()
+            self.logger.set_camera_available(available)
+            self._camera_preview_frame = frame
+            self.live_tab.set_camera_preview(frame, available)
+
+            # Continuous video writing happens exclusively in CameraController's
+            # worker thread.  Never send the resized preview frame to VideoWriter.
+            if self._camera_recording_active:
+                recording_error = self.camera.get_recording_error()
+                if recording_error:
+                    self._camera_recording_active = False
+                    if self.logger.is_recording() and not self._camera_error_logged:
+                        self.logger.log_event(
+                            "camera_error",
+                            {"video_recording": recording_error},
+                        )
+                        self._camera_error_logged = True
+
+        except Exception:
+            self.logger.set_camera_available(False)
+            self.live_tab.set_camera_preview(None, False)
+            self._camera_enabled = False
+            self.control_tab.set_camera_state(False, config.CAMERA_NOT_AVAILABLE_TEXT)
+            return
+
+    def _start_camera_video(
+        self,
+    ) -> None:
+        """Start writing a companion MP4 using the same base filename as the CSV recording."""
+
+        if not self._camera_enabled:
+            return
+
+        if not self._camera_record_video:
+            return
+
+        try:
+            if self.camera is None:
+                return
+
+            video_path = self.logger.get_video_path()
+            if video_path is None:
+                video_path = self.logger.build_video_path()
+                self.logger._video_path = video_path
+
+            if self.camera.start_recording(video_path):
+                self._camera_recording_active = True
+                self._camera_error_logged = False
+                self.logger.log_event("video_recording_started", video_path.name)
+                self.logger.set_camera_available(True)
+                self.logger.set_camera_metadata(
+                    camera_index=self.camera.camera_index,
+                    camera_auto_exposure=self.camera.get_auto_exposure(),
+                    camera_exposure=self.camera.get_exposure(),
+                    camera_gain=self.camera.get_gain(),
+                    video_recorded=True,
+                )
+            else:
+                self.logger.log_event("camera_error", "video_start_failed")
+                self._camera_recording_active = False
+        except Exception:
+            self._camera_recording_active = False
+            try:
+                self.logger.log_event("camera_error", "video_start_failed")
+            except Exception:
+                pass
+
+    def _stop_camera_video(
+        self,
+    ) -> None:
+        """Stop active video capture safely without affecting CSV or sequence logic."""
+
+        if self.camera is None:
+            return
+
+        try:
+            if self._camera_recording_active:
+                self.camera.stop_recording()
+                self._camera_recording_active = False
+                if self.logger.is_recording():
+                    self.logger.log_event("video_recording_stopped", self.logger.get_video_path().name if self.logger.get_video_path() else "")
+        except Exception:
+            pass
+        finally:
+            self._camera_recording_active = False
 
     # =================================================================
     # LIVE PLOT CONTROL
@@ -1218,6 +1681,9 @@ class MainWindow(QMainWindow):
 
             self.logger.start()
 
+            if self._camera_enabled and self._camera_record_video:
+                self._start_camera_video()
+
             # Manual recording ownership.
             self._recording_started_by_sequence = False
 
@@ -1461,6 +1927,10 @@ class MainWindow(QMainWindow):
 
                 self.logger.start()
 
+                if self._camera_enabled and self.sequence_tab.get_record_video():
+                    self._camera_record_video = True
+                    self._start_camera_video()
+
                 self._recording_started_by_sequence = True
 
                 self._last_event_state = (
@@ -1623,6 +2093,9 @@ class MainWindow(QMainWindow):
                 and self.logger.is_recording()
             ):
 
+                if self._camera_recording_active:
+                    self._stop_camera_video()
+
                 self.logger.stop()
 
             self._recording_started_by_sequence = False
@@ -1682,6 +2155,9 @@ class MainWindow(QMainWindow):
             self._recording_started_by_sequence
             and self.logger.is_recording()
         ):
+
+            if self._camera_recording_active:
+                self._stop_camera_video()
 
             self.logger.stop()
 
@@ -2207,6 +2683,9 @@ class MainWindow(QMainWindow):
 
             "smoke_fan_pwm_percent":
                 self.session.smoke_fan_pwm_percent,
+
+            "main_fan_rpm": self.session.main_fan_rpm,
+            "smoke_fan_rpm": self.session.smoke_fan_rpm,
         }
 
         # -------------------------------------------------------------
@@ -2391,6 +2870,17 @@ class MainWindow(QMainWindow):
             self.update_timer.stop()
 
         # -------------------------------------------------------------
+        # Camera
+        # -------------------------------------------------------------
+
+        try:
+            self._stop_camera_video()
+            if self.camera is not None:
+                self.camera.close()
+        except Exception:
+            pass
+
+        # -------------------------------------------------------------
         # Logger
         # -------------------------------------------------------------
 
@@ -2439,6 +2929,20 @@ class MainWindow(QMainWindow):
         except Exception:
 
             pass
+
+        # -------------------------------------------------------------
+        # FG / RPM monitors
+        # -------------------------------------------------------------
+
+        for monitor in (
+            getattr(self, "main_fan_rpm_monitor", None),
+            getattr(self, "smoke_fan_rpm_monitor", None),
+        ):
+            if monitor is not None:
+                try:
+                    monitor.cleanup()
+                except Exception:
+                    pass
 
         # -------------------------------------------------------------
         # Fans

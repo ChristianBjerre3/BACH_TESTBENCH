@@ -1,23 +1,37 @@
 """
 hardware/fans.py
 
-Fan control module for the airflow/smoke test bench.
+Fan controller for the AGCO Airflow Smoke Test Bench.
 
-This module provides a reusable FanController class for controlling
-a 2-wire 12 V BLDC fan through a MOSFET using PWM from a Raspberry Pi.
+Hardware:
+    Raspberry Pi 4
+    Delta EFB0412VHD-SP05
+    4-wire BLDC fans
 
-Important:
-- The Raspberry Pi GPIO pin does NOT power the fan directly.
-- The GPIO pin only controls the MOSFET gate.
-- The fan is powered from an external 12 V supply.
-- Raspberry Pi GND and 12 V supply GND must be common.
+Fan connections:
+    Red    -> +12 V
+    Black  -> GND
+    Blue   -> FG feedback
+    Yellow -> PWM input
 
-GPIO numbering:
-    BCM
+PWM control:
+    GPIO -> 4.7k resistor -> 2N3704 base
+    2N3704 collector -> fan PWM input
+    2N3704 emitter -> GND
 
-The class is designed so the same implementation can be used for:
-    - Main airflow fan
-    - Smoke chamber fan
+The transistor INVERTS the GPIO signal.
+
+    GPIO HIGH -> transistor ON  -> fan PWM LOW
+    GPIO LOW  -> transistor OFF -> fan PWM HIGH
+
+IMPORTANT:
+    The fan can run at maximum speed if its PWM
+    input is disconnected or the Raspberry Pi
+    stops driving the GPIO.
+
+    Software cannot guarantee a safe OFF state.
+
+    A physical 12 V power cut-off must be available.
 """
 
 from __future__ import annotations
@@ -29,32 +43,44 @@ from gpiozero import PWMOutputDevice
 import config
 
 
+# ============================================================
+# FAN STATE
+# ============================================================
+
 @dataclass
 class FanState:
     """
-    Represents the current software state of a fan.
+    Represents the requested software state.
 
     active:
-        True when the fan is commanded ON.
+        True if the fan has been commanded ON.
 
     pwm_percent:
-        Requested PWM duty cycle in percent, from 0 to 100.
+        Requested fan PWM duty cycle, 0-100 %.
     """
 
     active: bool = False
     pwm_percent: int = 0
 
 
+# ============================================================
+# FAN CONTROLLER
+# ============================================================
+
 class FanController:
     """
-    Controls one 2-wire BLDC fan through a MOSFET.
+    Control one Delta 4-wire fan.
 
-    The fan is controlled using supply-side PWM.
+    The fan receives constant external 12 V.
+
+    The Raspberry Pi controls only the separate
+    PWM input through an inverting transistor.
 
     Example:
+
         fan = FanController(
             gpio_pin=config.MAIN_FAN_PWM_GPIO,
-            name="Main Fan"
+            name="Main Fan",
         )
 
         fan.set_pwm(50)
@@ -70,111 +96,187 @@ class FanController:
         name: str,
         pwm_frequency_hz: int = config.FAN_PWM_FREQUENCY_HZ,
     ) -> None:
-        """
-        Initialize the fan controller.
-
-        Parameters
-        ----------
-        gpio_pin:
-            BCM GPIO pin connected to the MOSFET gate.
-
-        name:
-            Human-readable fan name used for debugging and logging.
-
-        pwm_frequency_hz:
-            PWM frequency used for fan control.
-        """
 
         self.gpio_pin = gpio_pin
         self.name = name
+
         self.pwm_frequency_hz = pwm_frequency_hz
 
         self.state = FanState()
 
+        self._closed = False
+
+        # The transistor inverts GPIO PWM.
+        self._inverted = config.FAN_PWM_INVERTED
+
+        # GPIO HIGH = transistor ON = fan PWM LOW.
+        #
+        # Initialize with the fan commanded OFF.
+        #
+        # WARNING:
+        # This only works while the GPIO is
+        # actively driven by the Raspberry Pi.
+
+        initial_gpio_value = (
+            1.0 if self._inverted else 0.0
+        )
+
         self._device = PWMOutputDevice(
             pin=self.gpio_pin,
             active_high=True,
-            initial_value=0.0,
+            initial_value=initial_gpio_value,
             frequency=self.pwm_frequency_hz,
         )
 
+    # ========================================================
+    # INTERNAL HELPERS
+    # ========================================================
+
+    def _ensure_open(self) -> None:
+        """
+        Prevent commands after GPIO cleanup.
+        """
+
+        if self._closed:
+            raise RuntimeError(
+                f"{self.name}: controller is closed."
+            )
+
+    def _gpio_duty_from_fan_duty(
+        self,
+        fan_duty: float,
+    ) -> float:
+        """
+        Convert requested fan PWM to GPIO PWM.
+
+        fan_duty:
+            0.0 = fan STOP
+            1.0 = fan maximum PWM
+
+        The transistor inverts the signal.
+        """
+
+        if self._inverted:
+            return 1.0 - fan_duty
+
+        return fan_duty
+
+    def _apply_output(self) -> None:
+        """
+        Apply the requested fan state.
+
+        The output is inverted to compensate
+        for the transistor stage.
+        """
+
+        self._ensure_open()
+
+        # OFF always overrides the stored PWM.
+        if not self.state.active:
+            fan_duty = 0.0
+
+        else:
+            fan_duty = (
+                self.state.pwm_percent / 100.0
+            )
+
+        gpio_duty = self._gpio_duty_from_fan_duty(
+            fan_duty
+        )
+
+        self._device.value = gpio_duty
+
+    # ========================================================
+    # PUBLIC CONTROL
+    # ========================================================
+
     def on(self) -> None:
         """
-        Turn the fan ON using the currently selected PWM value.
+        Enable the fan.
 
-        If the stored PWM value is 0 %, the fan remains physically stopped,
-        but the software state is still set to active.
+        The previously selected PWM percentage
+        is used.
 
-        Normally the GUI should avoid this situation by setting a useful
-        PWM value before turning the fan on.
+        If PWM is 0 %, the fan remains commanded
+        to stop.
         """
 
+        self._ensure_open()
+
         self.state.active = True
+
         self._apply_output()
 
     def off(self) -> None:
         """
-        Turn the fan OFF.
+        Command the fan to stop.
 
-        The selected PWM percentage is preserved internally so the fan can
-        later be turned back on at the same requested PWM value.
+        The selected PWM percentage is preserved.
         """
+
+        self._ensure_open()
 
         self.state.active = False
+
         self._apply_output()
 
-    def set_pwm(self, pwm_percent: int) -> None:
+    def set_pwm(
+        self,
+        pwm_percent: int,
+    ) -> None:
         """
-        Set requested fan PWM duty cycle.
+        Set the requested fan PWM percentage.
 
-        Parameters
-        ----------
-        pwm_percent:
-            PWM duty cycle in percent.
+        Allowed values are defined in config.py.
 
-            Allowed values are currently:
-                0, 10, 20, ..., 100
-
-        Raises
-        ------
-        TypeError:
-            If pwm_percent is not an integer.
-
-        ValueError:
-            If pwm_percent is outside the allowed PWM values.
+        Example:
+            0, 10, 20, ..., 100
         """
 
-        if not isinstance(pwm_percent, int):
-            raise TypeError("PWM percentage must be an integer.")
+        self._ensure_open()
+
+        if (
+            isinstance(pwm_percent, bool)
+            or not isinstance(pwm_percent, int)
+        ):
+            raise TypeError(
+                "PWM percentage must be an integer."
+            )
 
         if pwm_percent not in config.PWM_LEVELS:
             raise ValueError(
-                f"PWM percentage must be one of {config.PWM_LEVELS}. "
+                f"PWM must be one of "
+                f"{config.PWM_LEVELS}. "
                 f"Received: {pwm_percent}"
             )
 
         self.state.pwm_percent = pwm_percent
 
+        # Only update the physical output if ON.
         if self.state.active:
             self._apply_output()
 
     def stop(self) -> None:
         """
-        Immediately stop the fan and reset PWM to 0 %.
+        STOP ALL behaviour.
 
-        This is intended for STOP ALL behaviour.
+        Command fan OFF and reset PWM to 0 %.
         """
+
+        self._ensure_open()
 
         self.state.active = False
         self.state.pwm_percent = 0
+
         self._apply_output()
+
+    # ========================================================
+    # STATE INFORMATION
+    # ========================================================
 
     def get_state(self) -> FanState:
         """
-        Return a copy of the current fan state.
-
-        Returning a copy prevents external code from modifying the
-        internal fan state directly.
+        Return a copy of the current state.
         """
 
         return FanState(
@@ -184,45 +286,49 @@ class FanController:
 
     def is_active(self) -> bool:
         """
-        Return True if the fan is currently commanded ON.
+        Return the commanded active state.
         """
 
         return self.state.active
 
     def get_pwm(self) -> int:
         """
-        Return the currently selected PWM percentage.
+        Return the selected PWM percentage.
         """
 
         return self.state.pwm_percent
 
+    # ========================================================
+    # CLEANUP
+    # ========================================================
+
     def cleanup(self) -> None:
         """
-        Safely shut down the fan controller and release the GPIO resource.
+        Release the GPIO resource.
 
-        This should be called when the application closes.
+        First commands the fan to stop.
+
+        WARNING:
+        GPIO release can leave the PWM input
+        floating/high, causing maximum fan speed.
+
+        Disconnect the fan's 12 V supply before
+        shutting down the Raspberry Pi.
         """
+
+        if self._closed:
+            return
 
         self.state.active = False
         self.state.pwm_percent = 0
 
-        self._device.value = 0.0
-        self._device.close()
+        try:
+            # Best-effort software STOP.
+            self._apply_output()
 
-    def _apply_output(self) -> None:
-        """
-        Apply the current software state to the physical PWM output.
+        finally:
+            self._closed = True
 
-        GPIOZero expects PWM duty cycle as a floating-point value:
-
-            0.0 = 0 %
-            0.5 = 50 %
-            1.0 = 100 %
-        """
-
-        if not self.state.active:
-            self._device.value = 0.0
-            return
-
-        duty_cycle = self.state.pwm_percent / 100.0
-        self._device.value = duty_cycle
+            # Releasing GPIO is NOT a
+            # guaranteed physical fan stop.
+            self._device.close()

@@ -1,0 +1,77 @@
+import json
+import os
+import tempfile
+import unittest
+
+from PySide6.QtWidgets import QApplication
+
+from gui.live_tab import LiveTab
+from hardware.camera import CameraController
+from services.logger import DataLogger
+from services.test_session import TestSession
+
+
+class CameraLoggingTest(unittest.TestCase):
+    def test_video_filename_uses_same_base_name_as_csv(self):
+        session = TestSession()
+        session.set_metadata(test_name="Test 01")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logger = DataLogger(session=session, data_directory=temp_dir)
+            base_name = logger._create_base_filename()
+
+            video_path = logger.build_video_path(base_name=base_name)
+
+            self.assertTrue(video_path.name.endswith("_video.mp4"))
+            self.assertEqual(video_path.name, f"{base_name}_video.mp4")
+            self.assertFalse(video_path.name.startswith("video_"))
+
+    def test_camera_source_selection_is_stored_and_enumerated(self):
+        camera = CameraController(camera_index=0)
+
+        camera.set_camera_index(2)
+
+        self.assertEqual(camera.camera_index, 2)
+        self.assertTrue(camera.available_devices())
+
+    def test_live_tab_camera_preview_off_is_safe(self):
+        app = QApplication.instance() or QApplication([])
+        live_tab = LiveTab()
+
+        live_tab.set_camera_preview(None, False)
+        live_tab.set_camera_preview(None, True)
+
+        self.assertEqual(live_tab.camera_preview_label.text(), "CAMERA OFF")
+
+    def test_camera_settings_metadata_are_written(self):
+        session = TestSession()
+        session.set_metadata(test_name="Test 02")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logger = DataLogger(session=session, data_directory=temp_dir)
+            logger.start()
+            logger.set_camera_metadata(
+                camera_index=1,
+                camera_auto_exposure=True,
+                camera_exposure=150,
+                camera_gain=80,
+                video_recorded=True,
+            )
+            logger.stop()
+
+            with open(logger.get_metadata_path(), "r", encoding="utf-8") as metadata_file:
+                payload = json.load(metadata_file)
+
+            self.assertEqual(payload["camera_index"], 1)
+            self.assertTrue(payload["camera_auto_exposure"])
+            self.assertEqual(payload["camera_exposure"], 150)
+            self.assertEqual(payload["camera_gain"], 80)
+            self.assertTrue(payload["video_recorded"])
+
+    def test_camera_auto_exposure_defaults_to_on(self):
+        camera = CameraController(camera_index=0)
+        self.assertTrue(camera.get_auto_exposure() in (True, None))
+
+
+if __name__ == "__main__":
+    unittest.main()
