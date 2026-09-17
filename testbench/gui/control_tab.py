@@ -580,6 +580,9 @@ class ControlTab(QWidget):
         self.sensor_1_button.setCheckable(
             True
         )
+        self.sensor_1_button.setToolTip(
+            "Enables/disables data acquisition only. The LED is hardwired to 12 V."
+        )
 
         set_role(
             self.sensor_1_button,
@@ -615,7 +618,7 @@ class ControlTab(QWidget):
         )
 
         info = QLabel(
-            "Optical sensor"
+            "Measurement ON/OFF; LED is powered separately from 12 V"
         )
 
         set_label_role(
@@ -686,6 +689,9 @@ class ControlTab(QWidget):
         self.sensor_2_button.setCheckable(
             True
         )
+        self.sensor_2_button.setToolTip(
+            "Enables/disables data acquisition only. The LED is hardwired to 12 V."
+        )
 
         set_role(
             self.sensor_2_button,
@@ -721,7 +727,7 @@ class ControlTab(QWidget):
         )
 
         info = QLabel(
-            "Optical sensor"
+            "Measurement ON/OFF; LED is powered separately from 12 V"
         )
 
         set_label_role(

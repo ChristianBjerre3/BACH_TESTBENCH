@@ -281,7 +281,20 @@ class MainWindow(QMainWindow):
     def _initialize_hardware(
         self,
     ) -> None:
-        """Initialize real or simulated hardware."""
+        """
+        Initialize real or simulated hardware.
+
+        Real mode:
+            - Two fan controllers
+            - Two FG/RPM monitors
+            - ADS1115
+            - Two logical LED interfaces
+            - Two optical sensors
+
+        Simulation mode:
+            - Existing simulation backends
+            - No physical FG monitoring
+        """
 
         (
             FanController,
@@ -290,9 +303,9 @@ class MainWindow(QMainWindow):
             OpticalSensor,
         ) = _load_hardware_backend()
 
-        # -------------------------------------------------------------
-        # Fans
-        # -------------------------------------------------------------
+        # --------------------------------------------------------
+        # FAN CONTROLLERS
+        # --------------------------------------------------------
 
         self.main_fan = FanController(
             gpio_pin=config.MAIN_FAN_PWM_GPIO,
@@ -304,15 +317,36 @@ class MainWindow(QMainWindow):
             name="Smoke Fan",
         )
 
-        # -------------------------------------------------------------
+        # --------------------------------------------------------
+        # RPM MONITORS
+        # --------------------------------------------------------
+
+        self.main_fan_rpm_monitor = None
+        self.smoke_fan_rpm_monitor = None
+
+        if config.HARDWARE_MODE == "real":
+
+            from hardware.fan_rpm import FanRPMMonitor
+
+            self.main_fan_rpm_monitor = FanRPMMonitor(
+                gpio_pin=config.MAIN_FAN_FG_GPIO,
+                name="Main Fan",
+            )
+
+            self.smoke_fan_rpm_monitor = FanRPMMonitor(
+                gpio_pin=config.SMOKE_FAN_FG_GPIO,
+                name="Smoke Fan",
+            )
+
+        # --------------------------------------------------------
         # ADC
-        # -------------------------------------------------------------
+        # --------------------------------------------------------
 
         self.adc = ADCController()
 
-        # -------------------------------------------------------------
-        # LEDs
-        # -------------------------------------------------------------
+        # --------------------------------------------------------
+        # LED INTERFACES
+        # --------------------------------------------------------
 
         self.sensor_1_led = LEDController(
             gpio_pin=config.SENSOR_1_LED_GPIO,
@@ -324,9 +358,9 @@ class MainWindow(QMainWindow):
             name="Sensor 2 LED",
         )
 
-        # -------------------------------------------------------------
-        # Optical sensors
-        # -------------------------------------------------------------
+        # --------------------------------------------------------
+        # OPTICAL SENSORS
+        # --------------------------------------------------------
 
         self.sensor_1 = OpticalSensor(
             adc=self.adc,
@@ -855,6 +889,25 @@ class MainWindow(QMainWindow):
             )
 
             # ---------------------------------------------------------
+            # Read measured fan RPM before CSV logging and GUI refresh.
+            # Simulation has no physical FG signal: keep values unknown.
+            # ---------------------------------------------------------
+
+            main_rpm = (
+                self.main_fan_rpm_monitor.get_rpm()
+                if self.main_fan_rpm_monitor is not None
+                else None
+            )
+            smoke_rpm = (
+                self.smoke_fan_rpm_monitor.get_rpm()
+                if self.smoke_fan_rpm_monitor is not None
+                else None
+            )
+
+            self.session.set_main_fan_rpm(main_rpm)
+            self.session.set_smoke_fan_rpm(smoke_rpm)
+
+            # ---------------------------------------------------------
             # Time-series recording
             # ---------------------------------------------------------
 
@@ -886,6 +939,8 @@ class MainWindow(QMainWindow):
                     live_time_s=live_time_s,
                     sensor_1_voltage=sensor_1_voltage,
                     sensor_2_voltage=sensor_2_voltage,
+                    main_fan_rpm=self.session.main_fan_rpm,
+                    smoke_fan_rpm=self.session.smoke_fan_rpm,
                 )
 
                 # CONTROL side graph
@@ -2628,6 +2683,9 @@ class MainWindow(QMainWindow):
 
             "smoke_fan_pwm_percent":
                 self.session.smoke_fan_pwm_percent,
+
+            "main_fan_rpm": self.session.main_fan_rpm,
+            "smoke_fan_rpm": self.session.smoke_fan_rpm,
         }
 
         # -------------------------------------------------------------
@@ -2871,6 +2929,20 @@ class MainWindow(QMainWindow):
         except Exception:
 
             pass
+
+        # -------------------------------------------------------------
+        # FG / RPM monitors
+        # -------------------------------------------------------------
+
+        for monitor in (
+            getattr(self, "main_fan_rpm_monitor", None),
+            getattr(self, "smoke_fan_rpm_monitor", None),
+        ):
+            if monitor is not None:
+                try:
+                    monitor.cleanup()
+                except Exception:
+                    pass
 
         # -------------------------------------------------------------
         # Fans

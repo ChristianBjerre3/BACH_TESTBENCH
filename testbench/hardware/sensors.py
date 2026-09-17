@@ -1,25 +1,28 @@
 """
 hardware/sensors.py
 
-Optical sensor control for the airflow/smoke test bench.
+Optical sensor controller for the AGCO Airflow Smoke Test Bench.
 
-This module combines:
-    - One OPT101 optical sensor
-    - One ADS1115 ADC channel
-    - One corresponding red LED
+Hardware:
+    - 2 x OPT101 optical sensors
+    - 1 x ADS1115 ADC
+    - 2 x permanently powered red LEDs
 
-The OpticalSensor class represents one complete optical measurement
-position in the test bench.
+Connections:
+    Sensor 1 -> ADS1115 A0
+    Sensor 2 -> ADS1115 A1
 
-When a sensor is enabled:
-    - Its corresponding LED is turned ON
-    - Voltage measurements are allowed
+The LEDs are powered externally by 12 V.
+They are NOT controlled by Raspberry Pi GPIO.
 
-When a sensor is disabled:
-    - Its corresponding LED is turned OFF
-    - Voltage measurements return None
+Enabling a sensor means that its ADC measurements
+are enabled in software.
 
-The ADCController is shared between both optical sensors.
+Disabling a sensor means that its measurements
+return None.
+
+The physical LED remains powered whenever
+the external 12 V supply is enabled.
 """
 
 from __future__ import annotations
@@ -32,15 +35,22 @@ from hardware.leds import LEDController
 
 class OpticalSensor:
     """
-    Represents one complete optical measurement position.
+    Represents one optical measurement position.
 
-    Each optical sensor consists of:
-        - One OPT101
-        - One ADS1115 input channel
-        - One red LED
+    Each sensor consists of:
+        - OPT101 photodiode sensor
+        - ADS1115 analog input
+        - Corresponding red LED
 
-    The LED automatically follows the active state of the sensor.
+    The LEDController is retained for compatibility
+    with the existing application.
+
+    Its state is logical only.
     """
+
+    # ========================================================
+    # INITIALIZATION
+    # ========================================================
 
     def __init__(
         self,
@@ -49,140 +59,157 @@ class OpticalSensor:
         led: LEDController,
         name: str,
     ) -> None:
-        """
-        Initialize an optical sensor.
-
-        Parameters
-        ----------
-        adc:
-            Shared ADCController instance.
-
-        adc_channel:
-            ADS1115 input channel used by this sensor.
-
-        led:
-            LEDController belonging to this sensor.
-
-        name:
-            Human-readable sensor name.
-        """
 
         if not isinstance(adc, ADCController):
-            raise TypeError("adc must be an ADCController instance.")
+            raise TypeError(
+                "adc must be an ADCController instance."
+            )
 
-        if not isinstance(adc_channel, int):
-            raise TypeError("adc_channel must be an integer.")
+        if (
+            isinstance(adc_channel, bool)
+            or not isinstance(adc_channel, int)
+        ):
+            raise TypeError(
+                "ADC channel must be an integer."
+            )
 
         if adc_channel not in (0, 1, 2, 3):
             raise ValueError(
-                f"ADC channel must be 0, 1, 2 or 3. "
-                f"Received: {adc_channel}"
+                "ADC channel must be 0, 1, 2 or 3."
             )
 
         if not isinstance(led, LEDController):
-            raise TypeError("led must be an LEDController instance.")
+            raise TypeError(
+                "led must be an LEDController instance."
+            )
 
         self.adc = adc
         self.adc_channel = adc_channel
         self.led = led
         self.name = name
 
+        # Measurement starts disabled.
         self._active = False
 
-        # Safety: sensor LEDs must always start OFF.
+        # Reset logical LED request.
+        # This does not physically turn off the LED.
         self.led.off()
+
+    # ========================================================
+    # ENABLE / DISABLE
+    # ========================================================
 
     def enable(self) -> None:
         """
-        Enable the optical sensor.
+        Enable sensor measurements.
 
-        The corresponding LED is automatically turned ON.
+        The physical LED is not affected.
         """
 
         self.led.on()
+
         self._active = True
 
     def disable(self) -> None:
         """
-        Disable the optical sensor.
+        Disable sensor measurements.
 
-        The corresponding LED is automatically turned OFF.
+        The physical LED is not affected.
         """
 
         self.led.off()
+
         self._active = False
 
-    def set_active(self, active: bool) -> None:
+    def set_active(
+        self,
+        active: bool,
+    ) -> None:
         """
-        Set the sensor state directly.
-
-        Parameters
-        ----------
-        active:
-            True:
-                Enable sensor and turn LED ON.
-
-            False:
-                Disable sensor and turn LED OFF.
+        Enable or disable measurements.
         """
 
         if not isinstance(active, bool):
-            raise TypeError("Sensor active state must be a boolean.")
+            raise TypeError(
+                "Sensor active state must be a boolean."
+            )
 
         if active:
             self.enable()
         else:
             self.disable()
 
+    # ========================================================
+    # SENSOR STATE
+    # ========================================================
+
     def is_active(self) -> bool:
         """
-        Return True if the sensor is currently enabled.
+        Return whether measurements are enabled.
+
+        This does not indicate the physical LED state.
         """
 
         return self._active
 
+    # ========================================================
+    # VOLTAGE MEASUREMENT
+    # ========================================================
+
     def read_voltage(self) -> Optional[float]:
         """
-        Read the current OPT101 output voltage.
+        Read the OPT101 output voltage.
 
-        Returns
-        -------
-        float or None
-            Measured voltage in volts when the sensor is active.
+        Returns:
+            float:
+                Measured voltage in volts.
 
-            None when the sensor is disabled.
+            None:
+                Sensor measurements are disabled.
+
+        The ADCController handles the actual
+        ADS1115 communication.
         """
 
         if not self._active:
             return None
 
-        return self.adc.read_voltage(self.adc_channel)
+        return self.adc.read_voltage(
+            self.adc_channel
+        )
+
+    # ========================================================
+    # RAW ADC MEASUREMENT
+    # ========================================================
 
     def read_raw(self) -> Optional[int]:
         """
-        Read the raw ADS1115 value.
+        Read the raw ADS1115 conversion value.
 
-        Mainly intended for debugging and future calibration.
+        Intended for debugging and calibration.
 
-        Returns
-        -------
-        int or None
-            Raw ADC value when active.
-
-            None when disabled.
+        Returns None when measurements are disabled.
         """
 
         if not self._active:
             return None
 
-        return self.adc.read_raw(self.adc_channel)
+        return self.adc.read_raw(
+            self.adc_channel
+        )
+
+    # ========================================================
+    # CLEANUP
+    # ========================================================
 
     def cleanup(self) -> None:
         """
-        Safely disable the sensor.
+        Disable sensor measurements.
 
-        The ADC is NOT closed here because the ADCController is shared
-        between both optical sensors.
+        The ADC is shared between both sensors,
+        so it is not closed here.
+
+        The physical LED is not switched off.
         """
 
         self.disable()

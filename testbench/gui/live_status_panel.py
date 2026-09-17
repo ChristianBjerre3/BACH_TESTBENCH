@@ -8,8 +8,8 @@ The panel is display-only.
 It displays:
     - Sensor 1 state and voltage
     - Sensor 2 state and voltage
-    - Main fan state and commanded PWM
-    - Smoke fan state and commanded PWM
+    - Main fan state, commanded PWM, and measured RPM
+    - Smoke fan state, commanded PWM, and measured RPM
     - Smoke-machine manually logged state
     - Recording state and elapsed recording time
     - Sequence state and current step
@@ -468,6 +468,11 @@ class LiveStatusPanel(QWidget):
             Qt.AlignmentFlag.AlignRight
         )
 
+        self.main_fan_rpm_label = QLabel("-- RPM")
+        self.main_fan_rpm_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight
+        )
+
         self.smoke_fan_state_label = QLabel(
             "OFF"
         )
@@ -477,6 +482,11 @@ class LiveStatusPanel(QWidget):
         )
 
         self.smoke_fan_pwm_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight
+        )
+
+        self.smoke_fan_rpm_label = QLabel("-- RPM")
+        self.smoke_fan_rpm_label.setAlignment(
             Qt.AlignmentFlag.AlignRight
         )
 
@@ -541,9 +551,25 @@ class LiveStatusPanel(QWidget):
         row = self._add_status_row(
             system_grid,
             row,
+            "  Measured RPM",
+            self._field_label("FG feedback"),
+            self.main_fan_rpm_label,
+        )
+
+        row = self._add_status_row(
+            system_grid,
+            row,
             "Smoke fan",
             self.smoke_fan_state_label,
             self.smoke_fan_pwm_label,
+        )
+
+        row = self._add_status_row(
+            system_grid,
+            row,
+            "  Measured RPM",
+            self._field_label("FG feedback"),
+            self.smoke_fan_rpm_label,
         )
 
         row = self._add_status_row(
@@ -879,8 +905,10 @@ class LiveStatusPanel(QWidget):
         main_fan_pwm_percent: int,
         smoke_fan_active: bool,
         smoke_fan_pwm_percent: int,
+        main_fan_rpm: Optional[float] = None,
+        smoke_fan_rpm: Optional[float] = None,
     ) -> None:
-        """Update fan states and commanded PWM."""
+        """Update commanded fan states and independent measured FG RPM."""
 
         self._set_state_label(
             self.main_fan_state_label,
@@ -899,6 +927,20 @@ class LiveStatusPanel(QWidget):
         self.smoke_fan_pwm_label.setText(
             f"{int(smoke_fan_pwm_percent)} %"
         )
+
+        self.main_fan_rpm_label.setText(
+            self._format_rpm(main_fan_rpm)
+        )
+        self.smoke_fan_rpm_label.setText(
+            self._format_rpm(smoke_fan_rpm)
+        )
+
+    @staticmethod
+    def _format_rpm(rpm: Optional[float]) -> str:
+        """Display unavailable measurements differently from measured zero."""
+        if rpm is None:
+            return "-- RPM"
+        return f"{float(rpm):,.0f} RPM".replace(",", " ")
 
     # =================================================================
     # PUBLIC EXPERIMENT STATUS UPDATE

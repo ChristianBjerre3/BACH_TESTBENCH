@@ -1,40 +1,43 @@
 """
 hardware/leds.py
 
-LED control module for the airflow/smoke test bench.
+LED interface for the AGCO Airflow Smoke Test Bench.
 
-This module provides a small reusable LEDController class for the
-two red LEDs used together with the OPT101 optical sensors.
+Hardware:
+    2 x TLDR5800 red LEDs
 
-Each LED is controlled digitally from a Raspberry Pi GPIO pin.
+According to the AGCO schematic, the LEDs are
+powered directly from the external 12 V supply
+through individual 680 ohm resistors.
 
-GPIO numbering:
-    BCM
+The Raspberry Pi does NOT control the LEDs.
 
-Important:
-- Each LED must be connected with an appropriate series resistor.
-- The Raspberry Pi GPIO pin must not be connected directly across
-  an LED without current limiting.
+This class preserves the interface expected by
+the existing OpticalSensor and MainWindow classes.
+
+IMPORTANT:
+    on() and off() only update the requested
+    software state.
+
+    They do NOT physically switch the LEDs.
+
+    Actual LED operation depends on the
+    external 12 V power supply.
 """
 
 from __future__ import annotations
 
-from gpiozero import DigitalOutputDevice
+import config
 
 
 class LEDController:
     """
-    Controls one LED connected to a Raspberry Pi GPIO pin.
+    Compatibility interface for a hardwired LED.
 
-    Example:
-        led = LEDController(
-            gpio_pin=23,
-            name="Sensor 1 LED"
-        )
+    No GPIO device is created.
 
-        led.on()
-        led.off()
-        led.cleanup()
+    The constructor retains gpio_pin so that
+    existing MainWindow code remains compatible.
     """
 
     def __init__(
@@ -42,76 +45,118 @@ class LEDController:
         gpio_pin: int,
         name: str,
     ) -> None:
-        """
-        Initialize the LED controller.
-
-        Parameters
-        ----------
-        gpio_pin:
-            BCM GPIO pin controlling the LED.
-
-        name:
-            Human-readable LED name used for debugging/logging.
-        """
 
         self.gpio_pin = gpio_pin
         self.name = name
 
-        self._active = False
+        self._requested_active = False
+        self._closed = False
 
-        self._device = DigitalOutputDevice(
-            pin=self.gpio_pin,
-            active_high=True,
-            initial_value=False,
-        )
+        self._hardwired = config.LEDS_HARDWIRED
+
+        if not self._hardwired:
+            raise RuntimeError(
+                f"{self.name}: This LED controller "
+                "requires LEDS_HARDWIRED = True."
+            )
+
+    # ========================================================
+    # INTERNAL VALIDATION
+    # ========================================================
+
+    def _ensure_open(self) -> None:
+        """
+        Prevent commands after cleanup.
+        """
+
+        if self._closed:
+            raise RuntimeError(
+                f"{self.name}: LED controller is closed."
+            )
+
+    # ========================================================
+    # LED INTERFACE
+    # ========================================================
 
     def on(self) -> None:
         """
-        Turn the LED ON.
+        Store a software ON request.
+
+        Does not physically switch the LED.
         """
 
-        self._device.on()
-        self._active = True
+        self._ensure_open()
+
+        self._requested_active = True
 
     def off(self) -> None:
         """
-        Turn the LED OFF.
+        Store a software OFF request.
+
+        Does not physically switch the LED.
         """
 
-        self._device.off()
-        self._active = False
+        self._ensure_open()
 
-    def set_active(self, active: bool) -> None:
-        """
-        Set LED state directly.
+        self._requested_active = False
 
-        Parameters
-        ----------
-        active:
-            True  -> LED ON
-            False -> LED OFF
+    def set_active(
+        self,
+        active: bool,
+    ) -> None:
         """
+        Update the requested software state.
+        """
+
+        self._ensure_open()
 
         if not isinstance(active, bool):
-            raise TypeError("LED active state must be a boolean.")
+            raise TypeError(
+                "LED active state must be a boolean."
+            )
 
         if active:
             self.on()
         else:
             self.off()
 
+    # ========================================================
+    # STATE
+    # ========================================================
+
     def is_active(self) -> bool:
         """
-        Return True if the LED is currently ON.
+        Return the requested software state.
+
+        WARNING:
+        This is NOT a measurement of whether
+        the physical LED is illuminated.
         """
 
-        return self._active
+        return self._requested_active
+
+    def is_hardwired(self) -> bool:
+        """
+        Return whether the LED uses fixed wiring.
+        """
+
+        return self._hardwired
+
+    # ========================================================
+    # CLEANUP
+    # ========================================================
 
     def cleanup(self) -> None:
         """
-        Turn the LED OFF and release the GPIO resource.
+        Release the software interface.
+
+        No GPIO resources exist.
+
+        This cannot turn off the physical LED.
         """
 
-        self._device.off()
-        self._active = False
-        self._device.close()
+        if self._closed:
+            return
+
+        self._requested_active = False
+        self._closed = True
