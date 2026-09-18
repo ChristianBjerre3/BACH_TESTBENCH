@@ -105,7 +105,11 @@ ADS1115_GAIN = 1
 
 PWM_MIN_PERCENT = 0
 PWM_MAX_PERCENT = 100
-PWM_STEP_PERCENT = 10
+
+# Use a 1% step for fine-grained control.
+# This keeps the full range 0..100 and allows values like
+# 1, 2, 3, ... to be selected directly.
+PWM_STEP_PERCENT = 1
 
 PWM_LEVELS = tuple(
     range(
