@@ -1,6 +1,6 @@
 """
 Interaktiv hardware test af PWM og RPM (FG-signal).
-Opdateret med udvidet spin-up time for stabil aflæsning.
+Opdateret til 2 pulser pr. omdrejning for korrekte RPM-værdier.
 
 Kørsel af dette script starter en terminal-prompt, hvor du kan 
 indtaste ønsket PWM-procent. Ventilatoren spinder op (4 sek. ventetid), 
@@ -21,12 +21,20 @@ def main() -> None:
 
     # Initialisér hardware-klasser fra dine filer
     fan = FanController(gpio_pin=config.MAIN_FAN_PWM_GPIO, name="Main Fan")
-    rpm_monitor = FanRPMMonitor(gpio_pin=fg_gpio, name="Main Fan RPM")
+    
+    # VIGTIGT: Vi angiver her, at der er 2 pulser pr. revolution (fremfor standarden 4), 
+    # hvilket passer til Delta-ventilatorens reelle FG-signal.
+    rpm_monitor = FanRPMMonitor(
+        gpio_pin=fg_gpio, 
+        name="Main Fan RPM", 
+        pulses_per_revolution=2
+    )
 
     print("\n" + "="*50)
-    print(" INTERAKTIV FG (RPM) & PWM TESTBÆNK (Udvidet Spin-up)")
+    print(" INTERAKTIV FG (RPM) & PWM TESTBÆNK")
     print("="*50)
     print(f"PWM (Gul) GPIO: {fan.gpio_pin} | FG (Blå) GPIO: {rpm_monitor.gpio_pin}")
+    print("Indstillet til: 2 pulser pr. omdrejning (Reel RPM udregning)")
     print("Skriv 'q' for at afslutte.\n")
 
     try:
