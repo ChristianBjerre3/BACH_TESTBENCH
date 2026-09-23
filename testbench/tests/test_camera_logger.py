@@ -96,6 +96,12 @@ class CameraLoggingTest(unittest.TestCase):
         self.assertEqual(control_tab.camera_source_combo.count(), 0)
         self.assertFalse(control_tab.camera_source_combo.isEnabled())
 
+    def test_video_codec_matches_container(self):
+        camera = CameraController(camera_index=0)
+
+        self.assertEqual(camera._video_codec_for_path("recording.mp4"), "mp4v")
+        self.assertEqual(camera._video_codec_for_path("recording.avi"), "MJPG")
+
     def test_logger_creates_video_sync_sidecar_on_start(self):
         session = TestSession()
         session.set_metadata(test_name="Sync Test")
@@ -107,7 +113,16 @@ class CameraLoggingTest(unittest.TestCase):
             self.assertIsNotNone(logger.get_video_timestamps_path())
             self.assertTrue(logger.get_video_timestamps_path().name.endswith("_video_timestamps.csv"))
 
+            logger.log_video_frame_timestamp(frame_index=1, timestamp_monotonic_ns=123456789)
+
             logger.stop()
+
+            with open(logger.get_video_timestamps_path(), "r", encoding="utf-8") as video_timestamps_file:
+                rows = video_timestamps_file.read().strip().splitlines()
+
+            self.assertGreaterEqual(len(rows), 2)
+            self.assertIn("frame_index", rows[0])
+            self.assertIn("1", rows[1])
 
 
 if __name__ == "__main__":

@@ -78,7 +78,7 @@ class CameraController:
         - MainWindow must never write preview frames into the video writer.
     """
 
-    SUPPORTED_CAMERA_INDICES = (0, 1, 2)
+    SUPPORTED_CAMERA_INDICES = (0,) if sys.platform.startswith("linux") else (0, 1, 2)
 
     def __init__(
         self,
@@ -595,8 +595,17 @@ class CameraController:
         fps = max(1, min(int(record_fps), int(self.target_fps)))
         return output_width, output_height, fps
 
+    @staticmethod
+    def _video_codec_for_path(path: str | Path) -> str:
+        """Use a codec that matches the output container to avoid CPU-heavy MJPG->MP4 fallback."""
+
+        suffix = str(path).lower()
+        if suffix.endswith(".avi"):
+            return "MJPG"
+        return "mp4v"
+
     def _open_recording_writer_locked(self, frame) -> bool:
-        """Open an MP4 writer with a performance-safe recording profile."""
+        """Open a writer using a container-safe codec profile."""
 
         if cv2 is None or frame is None or self._pending_recording_path is None:
             return False
@@ -616,9 +625,11 @@ class CameraController:
             return False
 
         output_width, output_height, fps = self._resolve_recording_profile(width, height)
+        preferred_codec = self._video_codec_for_path(path)
+        fallback_codec = "MJPG" if preferred_codec == "mp4v" else "mp4v"
 
         writer = None
-        for codec in ("MJPG", "mp4v"):
+        for codec in (preferred_codec, fallback_codec):
             writer = cv2.VideoWriter(
                 str(path),
                 cv2.VideoWriter_fourcc(*codec),
@@ -635,7 +646,7 @@ class CameraController:
             writer = None
 
         if writer is None or not writer.isOpened():
-            self._recording_error = "Could not open MP4 VideoWriter using a safe codec profile"
+            self._recording_error = "Could not open VideoWriter using a safe codec profile"
             self._pending_recording_path = None
             return False
 
