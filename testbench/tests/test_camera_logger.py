@@ -72,6 +72,19 @@ class CameraLoggingTest(unittest.TestCase):
         camera = CameraController(camera_index=0)
         self.assertTrue(camera.get_auto_exposure() in (True, None))
 
+    def test_logger_creates_video_sync_sidecar_on_start(self):
+        session = TestSession()
+        session.set_metadata(test_name="Sync Test")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logger = DataLogger(session=session, data_directory=temp_dir)
+            logger.start()
+
+            self.assertIsNotNone(logger.get_video_timestamps_path())
+            self.assertTrue(logger.get_video_timestamps_path().name.endswith("_video_timestamps.csv"))
+
+            logger.stop()
+
 
 if __name__ == "__main__":
     unittest.main()

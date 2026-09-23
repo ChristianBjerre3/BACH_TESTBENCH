@@ -55,7 +55,7 @@ class _CameraWorker(threading.Thread):
                     self._on_error("Camera frame read failed")
                     break
 
-                self._on_frame(frame)
+                self._on_frame(frame, time.monotonic_ns())
 
                 elapsed = time.monotonic() - frame_start
                 sleep_for = self._frame_interval_s - elapsed
@@ -105,6 +105,7 @@ class CameraController:
         self._recording_frame_size: Optional[tuple[int, int]] = None
         self._recording_error: Optional[str] = None
         self._frames_written = 0
+        self._video_frame_callback = None
 
         self._auto_exposure: Optional[bool] = None
         self._exposure: Optional[int] = None
@@ -311,7 +312,12 @@ class CameraController:
             self._recording_error = str(message)
         self.stop_recording(preserve_error=True)
 
-    def _on_frame_ready(self, frame) -> None:
+    def set_video_frame_callback(self, callback) -> None:
+        """Register a callback for each recorded video frame timestamp."""
+
+        self._video_frame_callback = callback
+
+    def _on_frame_ready(self, frame, timestamp_monotonic_ns: Optional[int] = None) -> None:
         if frame is None:
             return
 
@@ -321,7 +327,7 @@ class CameraController:
             self._latest_preview_frame = self._build_preview_frame(frame)
 
         # IMPORTANT: only the camera worker writes video frames.
-        self._record_raw_frame(frame)
+        self._record_raw_frame(frame, timestamp_monotonic_ns)
         self._camera_available = True
 
     # ==================================================================
@@ -603,7 +609,7 @@ class CameraController:
         self._pending_recording_path = None
         return True
 
-    def _record_raw_frame(self, frame) -> None:
+    def _record_raw_frame(self, frame, timestamp_monotonic_ns: Optional[int] = None) -> None:
         """Write exactly one raw frame per worker capture cycle."""
 
         if cv2 is None or frame is None:
@@ -634,6 +640,12 @@ class CameraController:
 
                 writer.write(output)
                 self._frames_written += 1
+
+                if self._video_frame_callback is not None:
+                    self._video_frame_callback(
+                        frame_index=self._frames_written,
+                        timestamp_monotonic_ns=timestamp_monotonic_ns,
+                    )
 
             except Exception as exc:
                 self._recording_error = f"Video write failed: {exc}"

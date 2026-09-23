@@ -31,6 +31,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Any
 
+import time
+
 import config
 
 from services.test_session import TestSession
@@ -100,10 +102,13 @@ class DataLogger:
         self._events_path: Optional[Path] = None
 
         # ------------------------------------------------------------
-        # Video file
+        # Video files
         # ------------------------------------------------------------
 
         self._video_path: Optional[Path] = None
+        self._video_timestamps_path: Optional[Path] = None
+        self._video_timestamps_file = None
+        self._video_timestamps_writer: Optional[csv.DictWriter] = None
         self._base_name: Optional[str] = None
 
         # ------------------------------------------------------------
@@ -198,6 +203,11 @@ class DataLogger:
             / f"{base_name}_video{config.VIDEO_FILE_EXTENSION}"
         )
 
+        self._video_timestamps_path = (
+            self.data_directory
+            / f"{base_name}_video_timestamps.csv"
+        )
+
         try:
 
             # --------------------------------------------------------
@@ -235,6 +245,29 @@ class DataLogger:
             )
 
             self._event_writer.writeheader()
+
+            # --------------------------------------------------------
+            # Video timestamp sidecar
+            # --------------------------------------------------------
+
+            self._video_timestamps_file = self._video_timestamps_path.open(
+                mode="w",
+                newline="",
+                encoding="utf-8",
+            )
+
+            self._video_timestamps_writer = csv.DictWriter(
+                self._video_timestamps_file,
+                fieldnames=(
+                    "frame_index",
+                    "timestamp_monotonic_ns",
+                    "elapsed_time_s",
+                    "timestamp_iso",
+                ),
+                delimiter=config.CSV_DELIMITER,
+            )
+
+            self._video_timestamps_writer.writeheader()
 
             # --------------------------------------------------------
             # State
@@ -396,6 +429,39 @@ class DataLogger:
     # STOP RECORDING
     # =================================================================
 
+    def log_video_frame_timestamp(
+        self,
+        *,
+        frame_index: int,
+        timestamp_monotonic_ns: Optional[int] = None,
+    ) -> None:
+        """Write one row to the video timing sidecar file.
+
+        This creates a common monotonic timeline that can be matched against the
+        sensor CSV without relying on MP4 nominal FPS metadata.
+        """
+
+        if not self._recording:
+            return
+
+        if self._video_timestamps_writer is None:
+            return
+
+        if timestamp_monotonic_ns is None:
+            timestamp_monotonic_ns = time.monotonic_ns()
+
+        row = {
+            "frame_index": int(frame_index),
+            "timestamp_monotonic_ns": int(timestamp_monotonic_ns),
+            "elapsed_time_s": self.session.get_elapsed_time_s(),
+            "timestamp_iso": datetime.now().strftime(config.TIMESTAMP_FORMAT),
+        }
+
+        self._video_timestamps_writer.writerow(row)
+
+        if self._video_timestamps_file is not None:
+            self._video_timestamps_file.flush()
+
     def stop(self) -> None:
         """
         Stop recording and close all recording files.
@@ -461,6 +527,13 @@ class DataLogger:
         """Return path of current/latest associated video file."""
 
         return self._video_path
+
+    def get_video_timestamps_path(
+        self,
+    ) -> Optional[Path]:
+        """Return path of current/latest video timestamp sidecar CSV."""
+
+        return self._video_timestamps_path
 
     def build_video_path(
         self,
@@ -553,6 +626,12 @@ class DataLogger:
                 "video_file": (
                     self._video_path.name
                     if self._video_path is not None
+                    else None
+                ),
+
+                "video_timestamps_file": (
+                    self._video_timestamps_path.name
+                    if self._video_timestamps_path is not None
                     else None
                 ),
 
@@ -775,11 +854,21 @@ class DataLogger:
             finally:
                 self._event_file.close()
 
+        if self._video_timestamps_file is not None:
+
+            try:
+                self._video_timestamps_file.flush()
+            finally:
+                self._video_timestamps_file.close()
+
         self._csv_file = None
         self._csv_writer = None
 
         self._event_file = None
         self._event_writer = None
+
+        self._video_timestamps_file = None
+        self._video_timestamps_writer = None
 
         self._samples_since_flush = 0
 

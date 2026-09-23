@@ -397,6 +397,9 @@ class MainWindow(QMainWindow):
             preview_size=config.DEFAULT_CAMERA_PREVIEW_SIZE,
             target_fps=config.DEFAULT_CAMERA_TARGET_FPS,
         )
+        self.camera.set_video_frame_callback(
+            self.logger.log_video_frame_timestamp
+        )
 
         self.control_tab.set_camera_source_options(
             self.camera.available_devices()
