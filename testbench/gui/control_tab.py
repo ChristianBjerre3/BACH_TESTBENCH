@@ -1294,8 +1294,7 @@ class ControlTab(QWidget):
         set_label_role(source_label, "fieldLabel")
         self.camera_source_combo = QComboBox()
         self.camera_source_combo.setMinimumWidth(170)
-        self.camera_source_combo.addItem("Camera 0", 0)
-        self.camera_source_combo.setCurrentIndex(0)
+        self.camera_source_combo.setEnabled(False)
 
         source_row.addWidget(source_label)
         source_row.addWidget(self.camera_source_combo)
@@ -2153,20 +2152,20 @@ class ControlTab(QWidget):
         self,
         available: list[tuple[int, str]],
     ) -> None:
-        """Populate the camera-source dropdown in a stable, non-growing way."""
+        """Populate the camera-source dropdown using only real devices."""
 
         self.camera_source_combo.blockSignals(True)
         self.camera_source_combo.clear()
 
         if not available:
-            self.camera_source_combo.addItem("Camera 0", 0)
-            self.camera_source_combo.setCurrentIndex(0)
+            self.camera_source_combo.setEnabled(False)
             self.camera_source_combo.blockSignals(False)
             return
 
         for index, label in available:
             self.camera_source_combo.addItem(label, index)
 
+        self.camera_source_combo.setEnabled(True)
         self.camera_source_combo.blockSignals(False)
 
     def get_camera_source_index(

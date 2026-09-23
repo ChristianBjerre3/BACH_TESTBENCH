@@ -133,22 +133,29 @@ class CameraController:
                 yield index
 
     def available_devices(self) -> list[tuple[int, str]]:
-        """Return detected camera indices among 0, 1 and 2.
+        """Return only devices that OpenCV can actually open.
 
-        Discovery opens each candidate only briefly and releases it again.
-        It does not start the persistent camera worker.
+        We intentionally do not add a fake placeholder such as "Camera 0" when
+        no real device is detected. The GUI should only show actual hardware
+        candidates that were verified by a real probe.
         """
 
         if cv2 is None:
-            return [(i, f"Camera {i}") for i in self.SUPPORTED_CAMERA_INDICES]
+            return []
 
         devices: list[tuple[int, str]] = []
         for index in self.SUPPORTED_CAMERA_INDICES:
             cap = None
             try:
                 cap = self._open_capture(index)
-                if cap is not None and cap.isOpened():
-                    devices.append((index, f"Camera {index}"))
+                if cap is None or not cap.isOpened():
+                    continue
+
+                ok, _ = cap.read()
+                if not ok:
+                    continue
+
+                devices.append((index, f"Camera {index}"))
             except Exception:
                 pass
             finally:
@@ -157,11 +164,6 @@ class CameraController:
                         cap.release()
                     except Exception:
                         pass
-
-        # Keep at least Camera 0 visible so the GUI stays usable even if
-        # detection is temporarily unreliable.
-        if not devices:
-            devices.append((0, "Camera 0"))
 
         return devices
 

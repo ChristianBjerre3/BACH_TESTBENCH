@@ -5,6 +5,7 @@ import unittest
 
 from PySide6.QtWidgets import QApplication
 
+from gui.control_tab import ControlTab
 from gui.live_tab import LiveTab
 from hardware.camera import CameraController
 from services.logger import DataLogger
@@ -29,10 +30,15 @@ class CameraLoggingTest(unittest.TestCase):
     def test_camera_source_selection_is_stored_and_enumerated(self):
         camera = CameraController(camera_index=0)
 
-        camera.set_camera_index(2)
+        devices = camera.available_devices()
+        self.assertIsInstance(devices, list)
 
-        self.assertEqual(camera.camera_index, 2)
-        self.assertTrue(camera.available_devices())
+        if devices:
+            camera.set_camera_index(devices[0][0])
+            self.assertEqual(camera.camera_index, devices[0][0])
+        else:
+            camera.set_camera_index(0)
+            self.assertEqual(camera.camera_index, 0)
 
     def test_live_tab_camera_preview_off_is_safe(self):
         app = QApplication.instance() or QApplication([])
@@ -80,6 +86,15 @@ class CameraLoggingTest(unittest.TestCase):
 
         self.assertEqual((width, height), (1280, 720))
         self.assertLessEqual(fps, 15)
+
+    def test_camera_source_dropdown_only_lists_real_devices(self):
+        app = QApplication.instance() or QApplication([])
+        control_tab = ControlTab()
+
+        control_tab.set_camera_source_options([])
+
+        self.assertEqual(control_tab.camera_source_combo.count(), 0)
+        self.assertFalse(control_tab.camera_source_combo.isEnabled())
 
     def test_logger_creates_video_sync_sidecar_on_start(self):
         session = TestSession()
