@@ -72,6 +72,15 @@ class CameraLoggingTest(unittest.TestCase):
         camera = CameraController(camera_index=0)
         self.assertTrue(camera.get_auto_exposure() in (True, None))
 
+    def test_recording_profile_is_capped_for_fast_video_writes(self):
+        camera = CameraController(camera_index=0)
+        capture_size = (1920, 1080)
+
+        width, height, fps = camera._resolve_recording_profile(capture_size[0], capture_size[1])
+
+        self.assertEqual((width, height), (1280, 720))
+        self.assertLessEqual(fps, 15)
+
     def test_logger_creates_video_sync_sidecar_on_start(self):
         session = TestSession()
         session.set_metadata(test_name="Sync Test")

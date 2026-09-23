@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import Iterable, Optional
 
+import config
+
 try:
     import cv2
 except Exception:  # pragma: no cover
@@ -564,8 +566,35 @@ class CameraController:
 
         return True
 
+    def _resolve_recording_profile(self, width: int, height: int) -> tuple[int, int, int]:
+        """Return a lightweight recording size/FPS profile to avoid long encoding stalls."""
+
+        target_width, target_height = getattr(
+            config,
+            "DEFAULT_CAMERA_RECORD_RESOLUTION",
+            (1280, 720),
+        )
+        record_fps = getattr(
+            config,
+            "DEFAULT_CAMERA_RECORD_FPS",
+            15,
+        )
+
+        max_width = max(1, int(target_width))
+        max_height = max(1, int(target_height))
+
+        width = max(1, int(width))
+        height = max(1, int(height))
+
+        scale = min(max_width / width, max_height / height, 1.0)
+        output_width = max(1, int(round(width * scale)))
+        output_height = max(1, int(round(height * scale)))
+
+        fps = max(1, min(int(record_fps), int(self.target_fps)))
+        return output_width, output_height, fps
+
     def _open_recording_writer_locked(self, frame) -> bool:
-        """Open an MP4 writer. Called with ``_recording_lock`` held."""
+        """Open an MP4 writer with a performance-safe recording profile."""
 
         if cv2 is None or frame is None or self._pending_recording_path is None:
             return False
@@ -584,28 +613,32 @@ class CameraController:
             self._pending_recording_path = None
             return False
 
-        fps = float(max(1, min(60, self.target_fps)))
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        output_width, output_height, fps = self._resolve_recording_profile(width, height)
 
-        writer = cv2.VideoWriter(
-            str(path),
-            fourcc,
-            fps,
-            (int(width), int(height)),
-            True,
-        )
-
-        if not writer.isOpened():
+        writer = None
+        for codec in ("MJPG", "mp4v"):
+            writer = cv2.VideoWriter(
+                str(path),
+                cv2.VideoWriter_fourcc(*codec),
+                float(fps),
+                (int(output_width), int(output_height)),
+                True,
+            )
+            if writer.isOpened():
+                break
             try:
                 writer.release()
             except Exception:
                 pass
-            self._recording_error = "Could not open MP4 VideoWriter (mp4v)"
+            writer = None
+
+        if writer is None or not writer.isOpened():
+            self._recording_error = "Could not open MP4 VideoWriter using a safe codec profile"
             self._pending_recording_path = None
             return False
 
         self._recording_writer = writer
-        self._recording_frame_size = (int(width), int(height))
+        self._recording_frame_size = (int(output_width), int(output_height))
         self._pending_recording_path = None
         return True
 
