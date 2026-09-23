@@ -45,6 +45,26 @@ class UiRegressionTests(unittest.TestCase):
         self.assertEqual(bool(smoke_fan_widget.currentData()), True)
         self.assertEqual(int(smoke_pwm_widget.value()), 25)
 
+    def test_stop_step_is_one_second_all_off_zero_pwm(self):
+        app = QApplication.instance() or QApplication([])
+        tab = SequenceTab()
+        tab.clear_steps()
+
+        tab.add_step(duration_s=5.0, main_fan_active=True, main_fan_pwm_percent=50, smoke_fan_active=True, smoke_fan_pwm_percent=25)
+        tab.add_stop_step()
+
+        duration_widget = tab.sequence_table.cellWidget(1, 0)
+        main_fan_widget = tab.sequence_table.cellWidget(1, 1)
+        main_pwm_widget = tab.sequence_table.cellWidget(1, 2)
+        smoke_fan_widget = tab.sequence_table.cellWidget(1, 3)
+        smoke_pwm_widget = tab.sequence_table.cellWidget(1, 4)
+
+        self.assertAlmostEqual(float(duration_widget.value()), 1.0)
+        self.assertEqual(bool(main_fan_widget.currentData()), False)
+        self.assertEqual(int(main_pwm_widget.value()), 0)
+        self.assertEqual(bool(smoke_fan_widget.currentData()), False)
+        self.assertEqual(int(smoke_pwm_widget.value()), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

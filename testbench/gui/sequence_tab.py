@@ -1165,13 +1165,37 @@ class SequenceTab(QWidget):
     ) -> None:
         """Add a one-second fully-off stop step."""
 
-        self.add_step(
-            duration_s=1.0,
-            main_fan_active=False,
-            main_fan_pwm_percent=0,
-            smoke_fan_active=False,
-            smoke_fan_pwm_percent=0,
-        )
+        row = self.sequence_table.rowCount()
+
+        self.sequence_table.insertRow(row)
+
+        duration_spin = QDoubleSpinBox()
+        duration_spin.setRange(config.MIN_SEQUENCE_STEP_DURATION_S, 3600.0)
+        duration_spin.setDecimals(1)
+        duration_spin.setSingleStep(0.1)
+        duration_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        duration_spin.setValue(1.0)
+        duration_spin.valueChanged.connect(self._update_total_duration)
+        self.sequence_table.setCellWidget(row, 0, duration_spin)
+
+        main_fan_combo = self._create_on_off_combo()
+        self._set_combo_bool_value(main_fan_combo, False)
+        self.sequence_table.setCellWidget(row, 1, main_fan_combo)
+
+        main_pwm_spin = self._create_stop_pwm_spinbox()
+        main_pwm_spin.setValue(0)
+        self.sequence_table.setCellWidget(row, 2, main_pwm_spin)
+
+        smoke_fan_combo = self._create_on_off_combo()
+        self._set_combo_bool_value(smoke_fan_combo, False)
+        self.sequence_table.setCellWidget(row, 3, smoke_fan_combo)
+
+        smoke_pwm_spin = self._create_stop_pwm_spinbox()
+        smoke_pwm_spin.setValue(0)
+        self.sequence_table.setCellWidget(row, 4, smoke_pwm_spin)
+
+        self._refresh_step_numbers()
+        self._update_total_duration()
 
     # =================================================================
     # REMOVE STEP
@@ -1344,6 +1368,16 @@ class SequenceTab(QWidget):
 
         spin = QSpinBox()
         spin.setRange(5, 100)
+        spin.setSingleStep(1)
+        spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        return spin
+
+    @staticmethod
+    def _create_stop_pwm_spinbox() -> QSpinBox:
+        """Create a zero-aware stop-step PWM input. The stop step is always 0%."""
+
+        spin = QSpinBox()
+        spin.setRange(0, 100)
         spin.setSingleStep(1)
         spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         return spin
