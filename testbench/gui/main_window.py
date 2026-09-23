@@ -331,11 +331,13 @@ class MainWindow(QMainWindow):
             self.main_fan_rpm_monitor = FanRPMMonitor(
                 gpio_pin=config.MAIN_FAN_FG_GPIO,
                 name="Main Fan",
+                pulses_per_revolution=2,
             )
 
             self.smoke_fan_rpm_monitor = FanRPMMonitor(
                 gpio_pin=config.SMOKE_FAN_FG_GPIO,
                 name="Smoke Fan",
+                pulses_per_revolution=2,
             )
 
         # --------------------------------------------------------

@@ -61,6 +61,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QTextEdit,
     QCheckBox,
+    QSpinBox,
+    QAbstractSpinBox,
 )
 
 import config
@@ -796,8 +798,16 @@ class SequenceTab(QWidget):
             "Clear"
         )
 
+        self.add_stop_step_button = QPushButton(
+            "+ Add Stop Step"
+        )
+
         edit_layout.addWidget(
             self.add_step_button
+        )
+
+        edit_layout.addWidget(
+            self.add_stop_step_button
         )
 
         edit_layout.addWidget(
@@ -928,6 +938,10 @@ class SequenceTab(QWidget):
 
         self.add_step_button.clicked.connect(
             self.add_step
+        )
+
+        self.add_stop_step_button.clicked.connect(
+            self.add_stop_step
         )
 
         self.remove_step_button.clicked.connect(
@@ -1093,134 +1107,71 @@ class SequenceTab(QWidget):
 
     def add_step(
         self,
-        duration_s: float = 1.0,
+        duration_s: float | None = None,
         main_fan_active: bool = False,
         main_fan_pwm_percent: int = 0,
         smoke_fan_active: bool = False,
         smoke_fan_pwm_percent: int = 0,
     ) -> None:
-        """Add one sequence step."""
+        """Add one sequence step, copying the previous step by default."""
 
-        row = (
-            self.sequence_table.rowCount()
-        )
+        row = self.sequence_table.rowCount()
 
-        self.sequence_table.insertRow(
-            row
-        )
+        if duration_s is None:
+            duration_s = 5.0
 
-        # -------------------------------------------------------------
-        # Duration
-        # -------------------------------------------------------------
+        if row > 0:
+            previous = self._read_step_from_row(row - 1)
+            main_fan_active = bool(previous["main_fan_active"])
+            main_fan_pwm_percent = int(previous["main_fan_pwm_percent"])
+            smoke_fan_active = bool(previous["smoke_fan_active"])
+            smoke_fan_pwm_percent = int(previous["smoke_fan_pwm_percent"])
+            duration_s = float(previous["duration_s"]) if duration_s is None else float(duration_s)
+            if duration_s <= 0:
+                duration_s = 5.0
+
+        self.sequence_table.insertRow(row)
 
         duration_spin = QDoubleSpinBox()
+        duration_spin.setRange(config.MIN_SEQUENCE_STEP_DURATION_S, 3600.0)
+        duration_spin.setDecimals(1)
+        duration_spin.setSingleStep(0.1)
+        duration_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        duration_spin.setValue(float(duration_s))
+        duration_spin.valueChanged.connect(self._update_total_duration)
+        self.sequence_table.setCellWidget(row, 0, duration_spin)
 
-        duration_spin.setRange(
-            config.MIN_SEQUENCE_STEP_DURATION_S,
-            3600.0,
-        )
+        main_fan_combo = self._create_on_off_combo()
+        self._set_combo_bool_value(main_fan_combo, main_fan_active)
+        self.sequence_table.setCellWidget(row, 1, main_fan_combo)
 
-        duration_spin.setDecimals(
-            1
-        )
+        main_pwm_spin = self._create_pwm_spinbox()
+        main_pwm_spin.setValue(int(main_fan_pwm_percent))
+        self.sequence_table.setCellWidget(row, 2, main_pwm_spin)
 
-        duration_spin.setSingleStep(
-            0.1
-        )
+        smoke_fan_combo = self._create_on_off_combo()
+        self._set_combo_bool_value(smoke_fan_combo, smoke_fan_active)
+        self.sequence_table.setCellWidget(row, 3, smoke_fan_combo)
 
-        duration_spin.setValue(
-            float(duration_s)
-        )
-
-        duration_spin.valueChanged.connect(
-            self._update_total_duration
-        )
-
-        self.sequence_table.setCellWidget(
-            row,
-            0,
-            duration_spin,
-        )
-
-        # -------------------------------------------------------------
-        # Main fan
-        # -------------------------------------------------------------
-
-        main_fan_combo = (
-            self._create_on_off_combo()
-        )
-
-        self._set_combo_bool_value(
-            main_fan_combo,
-            main_fan_active,
-        )
-
-        self.sequence_table.setCellWidget(
-            row,
-            1,
-            main_fan_combo,
-        )
-
-        # -------------------------------------------------------------
-        # Main PWM
-        # -------------------------------------------------------------
-
-        main_pwm_combo = (
-            self._create_pwm_combo()
-        )
-
-        self._set_combo_value(
-            main_pwm_combo,
-            main_fan_pwm_percent,
-        )
-
-        self.sequence_table.setCellWidget(
-            row,
-            2,
-            main_pwm_combo,
-        )
-
-        # -------------------------------------------------------------
-        # Smoke fan
-        # -------------------------------------------------------------
-
-        smoke_fan_combo = (
-            self._create_on_off_combo()
-        )
-
-        self._set_combo_bool_value(
-            smoke_fan_combo,
-            smoke_fan_active,
-        )
-
-        self.sequence_table.setCellWidget(
-            row,
-            3,
-            smoke_fan_combo,
-        )
-
-        # -------------------------------------------------------------
-        # Smoke PWM
-        # -------------------------------------------------------------
-
-        smoke_pwm_combo = (
-            self._create_pwm_combo()
-        )
-
-        self._set_combo_value(
-            smoke_pwm_combo,
-            smoke_fan_pwm_percent,
-        )
-
-        self.sequence_table.setCellWidget(
-            row,
-            4,
-            smoke_pwm_combo,
-        )
+        smoke_pwm_spin = self._create_pwm_spinbox()
+        smoke_pwm_spin.setValue(int(smoke_fan_pwm_percent))
+        self.sequence_table.setCellWidget(row, 4, smoke_pwm_spin)
 
         self._refresh_step_numbers()
-
         self._update_total_duration()
+
+    def add_stop_step(
+        self,
+    ) -> None:
+        """Add a one-second fully-off stop step."""
+
+        self.add_step(
+            duration_s=1.0,
+            main_fan_active=False,
+            main_fan_pwm_percent=0,
+            smoke_fan_active=False,
+            smoke_fan_pwm_percent=0,
+        )
 
     # =================================================================
     # REMOVE STEP
@@ -1344,7 +1295,7 @@ class SequenceTab(QWidget):
 
                 "main_fan_pwm_percent":
                     int(
-                        main_pwm_widget.currentData()
+                        main_pwm_widget.value()
                     ),
 
                 "smoke_fan_active":
@@ -1354,7 +1305,7 @@ class SequenceTab(QWidget):
 
                 "smoke_fan_pwm_percent":
                     int(
-                        smoke_pwm_widget.currentData()
+                        smoke_pwm_widget.value()
                     ),
             }
 
@@ -1388,21 +1339,20 @@ class SequenceTab(QWidget):
         return combo
 
     @staticmethod
-    def _create_pwm_combo(
-    ) -> QComboBox:
-        """Create PWM selector."""
+    def _create_pwm_spinbox() -> QSpinBox:
+        """Create PWM numeric selector from 5 to 100%."""
 
-        combo = QComboBox()
+        spin = QSpinBox()
+        spin.setRange(5, 100)
+        spin.setSingleStep(1)
+        spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        return spin
 
-        for pwm in config.PWM_LEVELS:
+    @staticmethod
+    def _create_pwm_combo() -> QComboBox:
+        """Backward-compatible alias kept for older references."""
 
-            combo.addItem(
-                f"{pwm} %",
-                pwm,
-            )
-
-        return combo
-
+        return SequenceTab._create_pwm_spinbox()
     # =================================================================
     # COMBO HELPERS
     # =================================================================
@@ -1446,6 +1396,26 @@ class SequenceTab(QWidget):
     # =================================================================
     # STEP NUMBERS
     # =================================================================
+
+    def _read_step_from_row(
+        self,
+        row: int,
+    ) -> dict:
+        """Return the current values from a given step row."""
+
+        duration_widget = self.sequence_table.cellWidget(row, 0)
+        main_fan_widget = self.sequence_table.cellWidget(row, 1)
+        main_pwm_widget = self.sequence_table.cellWidget(row, 2)
+        smoke_fan_widget = self.sequence_table.cellWidget(row, 3)
+        smoke_pwm_widget = self.sequence_table.cellWidget(row, 4)
+
+        return {
+            "duration_s": float(duration_widget.value()) if duration_widget is not None else 5.0,
+            "main_fan_active": bool(main_fan_widget.currentData()) if main_fan_widget is not None else False,
+            "main_fan_pwm_percent": int(main_pwm_widget.value()) if main_pwm_widget is not None else 0,
+            "smoke_fan_active": bool(smoke_fan_widget.currentData()) if smoke_fan_widget is not None else False,
+            "smoke_fan_pwm_percent": int(smoke_pwm_widget.value()) if smoke_pwm_widget is not None else 0,
+        }
 
     def _refresh_step_numbers(
         self,

@@ -55,6 +55,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QSizePolicy,
     QSpinBox,
+    QAbstractSpinBox,
 )
 
 import config
@@ -1406,19 +1407,15 @@ class ControlTab(QWidget):
     # =================================================================
 
     @staticmethod
-    def _create_pwm_combo() -> QComboBox:
-        """Create PWM selector."""
+    def _create_pwm_combo() -> QSpinBox:
+        """Create PWM numeric selector."""
 
-        combo = QComboBox()
-
-        for pwm in config.PWM_LEVELS:
-
-            combo.addItem(
-                f"{pwm} %",
-                pwm,
-            )
-
-        return combo
+        spin = QSpinBox()
+        spin.setRange(5, 100)
+        spin.setSingleStep(1)
+        spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        spin.setValue(50)
+        return spin
 
     # =================================================================
     # SIGNAL CONNECTIONS
@@ -1434,7 +1431,7 @@ class ControlTab(QWidget):
             self._on_main_fan_toggled
         )
 
-        self.main_fan_pwm_combo.currentIndexChanged.connect(
+        self.main_fan_pwm_combo.valueChanged.connect(
             self._on_main_fan_pwm_changed
         )
 
@@ -1443,7 +1440,7 @@ class ControlTab(QWidget):
             self._on_smoke_fan_toggled
         )
 
-        self.smoke_fan_pwm_combo.currentIndexChanged.connect(
+        self.smoke_fan_pwm_combo.valueChanged.connect(
             self._on_smoke_fan_pwm_changed
         )
 
@@ -1532,15 +1529,8 @@ class ControlTab(QWidget):
         self,
     ) -> None:
 
-        pwm = (
-            self.main_fan_pwm_combo.currentData()
-        )
-
-        if pwm is not None:
-
-            self.main_fan_pwm_changed.emit(
-                int(pwm)
-            )
+        pwm = self.main_fan_pwm_combo.value()
+        self.main_fan_pwm_changed.emit(int(pwm))
 
     # =================================================================
     # SMOKE FAN EVENTS
@@ -1569,15 +1559,8 @@ class ControlTab(QWidget):
         self,
     ) -> None:
 
-        pwm = (
-            self.smoke_fan_pwm_combo.currentData()
-        )
-
-        if pwm is not None:
-
-            self.smoke_fan_pwm_changed.emit(
-                int(pwm)
-            )
+        pwm = self.smoke_fan_pwm_combo.value()
+        self.smoke_fan_pwm_changed.emit(int(pwm))
 
     # =================================================================
     # SENSOR EVENTS
@@ -1924,50 +1907,18 @@ class ControlTab(QWidget):
         pwm_percent: int,
     ) -> None:
 
-        index = (
-            self.main_fan_pwm_combo.findData(
-                pwm_percent
-            )
-        )
-
-        if index >= 0:
-
-            self.main_fan_pwm_combo.blockSignals(
-                True
-            )
-
-            self.main_fan_pwm_combo.setCurrentIndex(
-                index
-            )
-
-            self.main_fan_pwm_combo.blockSignals(
-                False
-            )
+        self.main_fan_pwm_combo.blockSignals(True)
+        self.main_fan_pwm_combo.setValue(int(pwm_percent))
+        self.main_fan_pwm_combo.blockSignals(False)
 
     def set_smoke_fan_pwm(
         self,
         pwm_percent: int,
     ) -> None:
 
-        index = (
-            self.smoke_fan_pwm_combo.findData(
-                pwm_percent
-            )
-        )
-
-        if index >= 0:
-
-            self.smoke_fan_pwm_combo.blockSignals(
-                True
-            )
-
-            self.smoke_fan_pwm_combo.setCurrentIndex(
-                index
-            )
-
-            self.smoke_fan_pwm_combo.blockSignals(
-                False
-            )
+        self.smoke_fan_pwm_combo.blockSignals(True)
+        self.smoke_fan_pwm_combo.setValue(int(pwm_percent))
+        self.smoke_fan_pwm_combo.blockSignals(False)
 
     # =================================================================
     # PUBLIC SENSOR UPDATE METHODS

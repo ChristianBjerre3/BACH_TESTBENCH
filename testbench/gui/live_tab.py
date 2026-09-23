@@ -489,6 +489,8 @@ class LiveTab(QWidget):
             connect="finite",
         )
 
+        self.plot.setYRange(0.0, 2.6, padding=0.0)
+
         # Initial visible time interval.
         self.plot.setXRange(
             0.0,
@@ -1305,6 +1307,7 @@ class LiveTab(QWidget):
                 ),
                 padding=0.0,
             )
+            self.plot.setYRange(0.0, 2.6, padding=0.0)
             self.rpm_plot.setXRange(
                 earliest_visible, max(latest_time, earliest_visible + 1.0), padding=0.0,
             )
@@ -1528,6 +1531,7 @@ class LiveTab(QWidget):
             ),
             padding=0.0,
         )
+        self.plot.setYRange(0.0, 2.6, padding=0.0)
         self.rpm_plot.setXRange(
             0.0, min(10.0, float(config.LIVE_PLOT_TIME_WINDOW_S)), padding=0.0,
         )

@@ -850,6 +850,8 @@ class LiveStatusPanel(QWidget):
             connect="finite",
         )
 
+        self.plot.setYRange(0.0, 2.6, padding=0.0)
+
         layout.addWidget(
             self.plot
         )
@@ -1171,6 +1173,7 @@ class LiveStatusPanel(QWidget):
                 ),
                 padding=0.0,
             )
+            self.plot.setYRange(0.0, 2.6, padding=0.0)
 
     # =================================================================
     # CLEAR PLOT
@@ -1198,6 +1201,7 @@ class LiveStatusPanel(QWidget):
             ),
             padding=0.0,
         )
+        self.plot.setYRange(0.0, 2.6, padding=0.0)
 
     # =================================================================
     # VOLTAGE FORMAT
