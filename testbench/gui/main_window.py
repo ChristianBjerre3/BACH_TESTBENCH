@@ -421,6 +421,9 @@ class MainWindow(QMainWindow):
         self._camera_preview_frame = None
         self._camera_error_logged = False
 
+        self._camera_2_enabled = False
+        self._camera_2_record_video = False
+
         self.logger.set_camera_available(
             self.camera.is_available()
         )

@@ -347,8 +347,14 @@ class ControlTab(QWidget):
             self.recording_card
         )
 
-        main_layout.addWidget(
-            self.camera_card
+        dashboard_layout.addWidget(
+            self.camera_card,
+            3,
+            1,
+        )
+        dashboard_layout.setRowStretch(
+            3,
+            1,
         )
 
         # -------------------------------------------------------------

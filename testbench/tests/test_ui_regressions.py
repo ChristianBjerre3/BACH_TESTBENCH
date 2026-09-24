@@ -2,6 +2,7 @@ import unittest
 
 from PySide6.QtWidgets import QApplication
 
+import config
 from gui.control_tab import ControlTab
 from gui.live_tab import LiveTab
 from gui.sequence_tab import SequenceTab
@@ -45,6 +46,22 @@ class UiRegressionTests(unittest.TestCase):
         self.assertTrue(hasattr(tab, "camera_2_gain_spin"))
         self.assertTrue(hasattr(tab, "camera_2_record_video_checkbox"))
         self.assertTrue(hasattr(tab, "camera_2_status_label"))
+
+    def test_main_window_initializes_secondary_camera_state(self):
+        app = QApplication.instance() or QApplication([])
+        from gui.main_window import MainWindow
+
+        previous_mode = config.HARDWARE_MODE
+        config.HARDWARE_MODE = "simulation"
+        try:
+            window = MainWindow()
+        finally:
+            config.HARDWARE_MODE = previous_mode
+
+        self.assertTrue(hasattr(window, "_camera_2_enabled"))
+        self.assertFalse(window._camera_2_enabled)
+        self.assertTrue(hasattr(window, "_camera_2_record_video"))
+        self.assertFalse(window._camera_2_record_video)
 
     def test_sequence_new_step_defaults_to_5_seconds_and_copies_previous_step(self):
         app = QApplication.instance() or QApplication([])
