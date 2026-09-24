@@ -1418,8 +1418,14 @@ class MainWindow(QMainWindow):
                 self.control_tab.set_auto_exposure_enabled(False, supported=False)
                 return
 
-            self.camera.set_auto_exposure(bool(enabled))
-            self.control_tab.set_auto_exposure_enabled(bool(enabled), supported=True)
+            accepted = self.camera.set_auto_exposure(bool(enabled))
+            actual = self.camera.get_auto_exposure()
+            if not accepted:
+                self.logger.log_event("camera_warning", "auto_exposure_change_rejected")
+
+            # Reflect the camera's real state, not the requested one, so the GUI
+            # never drifts out of sync with hardware that silently rejects a change.
+            self.control_tab.set_auto_exposure_enabled(bool(actual), supported=True)
             self.control_tab.set_exposure_value(
                 self.camera.get_exposure(),
                 supported=self.camera.supports_exposure(),
@@ -1429,7 +1435,7 @@ class MainWindow(QMainWindow):
                 supported=self.camera.supports_gain(),
             )
             self.logger.set_camera_metadata(
-                camera_auto_exposure=bool(enabled),
+                camera_auto_exposure=actual,
                 camera_exposure=self.camera.get_exposure(),
                 camera_gain=self.camera.get_gain(),
             )
@@ -1478,8 +1484,14 @@ class MainWindow(QMainWindow):
                 self.control_tab.set_camera_2_auto_exposure_enabled(False, supported=False)
                 return
 
-            self.camera_2.set_auto_exposure(bool(enabled))
-            self.control_tab.set_camera_2_auto_exposure_enabled(bool(enabled), supported=True)
+            accepted = self.camera_2.set_auto_exposure(bool(enabled))
+            actual = self.camera_2.get_auto_exposure()
+            if not accepted:
+                self.logger.log_event("camera_warning", "auto_exposure_change_rejected_camera_2")
+
+            # Reflect the camera's real state, not the requested one, so the GUI
+            # never drifts out of sync with hardware that silently rejects a change.
+            self.control_tab.set_camera_2_auto_exposure_enabled(bool(actual), supported=True)
             self.control_tab.set_camera_2_exposure_value(
                 self.camera_2.get_exposure(),
                 supported=self.camera_2.supports_exposure(),
