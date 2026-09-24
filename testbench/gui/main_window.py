@@ -1687,17 +1687,19 @@ class MainWindow(QMainWindow):
     def _stop_camera_video(
         self,
     ) -> None:
-        """Stop active video capture safely without affecting CSV or sequence logic."""
-
-        if self.camera is None:
-            return
+        """Stop active video capture for all active cameras."""
 
         try:
-            if self._camera_recording_active:
+            if self.camera is not None and self._camera_recording_active:
                 self.camera.stop_recording()
                 self._camera_recording_active = False
-                if self.logger.is_recording():
-                    self.logger.log_event("video_recording_stopped", self.logger.get_video_path().name if self.logger.get_video_path() else "")
+
+            if self.camera_2 is not None:
+                self.camera_2.stop_recording()
+
+            if self.logger.is_recording():
+                video_path = self.logger.get_video_path()
+                self.logger.log_event("video_recording_stopped", video_path.name if video_path else "")
         except Exception:
             pass
         finally:
@@ -2676,6 +2678,9 @@ class MainWindow(QMainWindow):
                 self.logger.log_event(
                     "stop_all"
                 )
+
+            if self._camera_recording_active or (self.camera_2 is not None and self.camera_2.is_recording()):
+                self._stop_camera_video()
 
             # ---------------------------------------------------------
             # Recording ownership
