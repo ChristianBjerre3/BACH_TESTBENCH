@@ -2619,25 +2619,15 @@ class MainWindow(QMainWindow):
             - Stop Smoke Fan
             - Smoke PWM -> 0 %
             - Stop sequence
-
-        Never:
-            - Disable sensors
-            - Change smoke-machine state
-
-        Recording:
-            - Manual recording continues
-            - Sequence-owned recording stops
+            - Stop all active video recording
+            - Stop data logging
+            - Disable both sensors
         """
 
         try:
 
             sequence_was_running = (
                 self.sequence.is_running()
-            )
-
-            sequence_owned_recording = (
-                self._recording_started_by_sequence
-                and self.logger.is_recording()
             )
 
             # ---------------------------------------------------------
@@ -2648,13 +2638,21 @@ class MainWindow(QMainWindow):
 
                 self.sequence.stop()
 
-            else:
+            self.main_fan.stop()
 
-                self.main_fan.stop()
-
-                self.smoke_fan.stop()
+            self.smoke_fan.stop()
 
             self.session.apply_stop_all_state()
+
+            # ---------------------------------------------------------
+            # Disable both sensors
+            # ---------------------------------------------------------
+
+            self.sensor_1.set_active(False)
+            self.sensor_2.set_active(False)
+
+            self.session.set_sensor_1_active(False)
+            self.session.set_sensor_2_active(False)
 
             # ---------------------------------------------------------
             # Log resulting fan changes
@@ -2679,20 +2677,25 @@ class MainWindow(QMainWindow):
                     "stop_all"
                 )
 
-            if self._camera_recording_active or (self.camera_2 is not None and self.camera_2.is_recording()):
-                self._stop_camera_video()
-
             # ---------------------------------------------------------
-            # Recording ownership
+            # Force all active video recording to stop immediately
             # ---------------------------------------------------------
 
-            if sequence_owned_recording:
+            self._stop_camera_video()
+
+            # ---------------------------------------------------------
+            # Stop data logging entirely
+            # ---------------------------------------------------------
+
+            if self.logger.is_recording():
 
                 self.logger.stop()
 
-                self._recording_started_by_sequence = False
+            self._recording_started_by_sequence = False
 
-            # Manual recording intentionally continues.
+            self.control_tab.set_recording_state(
+                False
+            )
 
             self.control_tab.set_sequence_running(
                 False

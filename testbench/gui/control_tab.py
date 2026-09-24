@@ -1543,7 +1543,7 @@ class ControlTab(QWidget):
         """Create PWM numeric selector."""
 
         spin = QSpinBox()
-        spin.setRange(5, 100)
+        spin.setRange(0, 100)
         spin.setSingleStep(1)
         spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         spin.setValue(50)

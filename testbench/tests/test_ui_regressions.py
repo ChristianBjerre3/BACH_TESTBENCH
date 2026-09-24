@@ -9,13 +9,13 @@ from gui.sequence_tab import SequenceTab
 
 
 class UiRegressionTests(unittest.TestCase):
-    def test_control_pwm_controls_are_numeric_and_range_5_to_100(self):
+    def test_control_pwm_controls_are_numeric_and_range_0_to_100(self):
         app = QApplication.instance() or QApplication([])
         tab = ControlTab()
 
-        self.assertEqual(tab.main_fan_pwm_combo.minimum(), 5)
+        self.assertEqual(tab.main_fan_pwm_combo.minimum(), 0)
         self.assertEqual(tab.main_fan_pwm_combo.maximum(), 100)
-        self.assertEqual(tab.smoke_fan_pwm_combo.minimum(), 5)
+        self.assertEqual(tab.smoke_fan_pwm_combo.minimum(), 0)
         self.assertEqual(tab.smoke_fan_pwm_combo.maximum(), 100)
 
     def test_live_sensor_plot_has_fixed_voltage_axis_0_to_2_6(self):
