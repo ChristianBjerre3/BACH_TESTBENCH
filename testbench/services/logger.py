@@ -106,6 +106,7 @@ class DataLogger:
         # ------------------------------------------------------------
 
         self._video_path: Optional[Path] = None
+        self._video_2_path: Optional[Path] = None
         self._video_timestamps_path: Optional[Path] = None
         self._video_timestamps_file = None
         self._video_timestamps_writer: Optional[csv.DictWriter] = None
@@ -201,6 +202,11 @@ class DataLogger:
         self._video_path = (
             self.data_directory
             / f"{base_name}_video{config.VIDEO_FILE_EXTENSION}"
+        )
+
+        self._video_2_path = (
+            self.data_directory
+            / f"{base_name}_video_cam2{config.VIDEO_FILE_EXTENSION}"
         )
 
         self._video_timestamps_path = (
@@ -528,6 +534,13 @@ class DataLogger:
 
         return self._video_path
 
+    def get_video_2_path(
+        self,
+    ) -> Optional[Path]:
+        """Return path of current/latest secondary camera video file."""
+
+        return self._video_2_path
+
     def get_video_timestamps_path(
         self,
     ) -> Optional[Path]:
@@ -550,6 +563,23 @@ class DataLogger:
         return (
             self.data_directory
             / f"{base_name}_video{config.VIDEO_FILE_EXTENSION}"
+        )
+
+    def build_video_2_path(
+        self,
+        base_name: Optional[str] = None,
+    ) -> Path:
+        """Build the companion video path for the secondary camera."""
+
+        if base_name is None:
+            if self._base_name is not None:
+                base_name = self._base_name
+            else:
+                base_name = self._create_base_filename()
+
+        return (
+            self.data_directory
+            / f"{base_name}_video_cam2{config.VIDEO_FILE_EXTENSION}"
         )
 
     def set_camera_available(
@@ -626,6 +656,12 @@ class DataLogger:
                 "video_file": (
                     self._video_path.name
                     if self._video_path is not None
+                    else None
+                ),
+
+                "video_2_file": (
+                    self._video_2_path.name
+                    if self._video_2_path is not None
                     else None
                 ),
 

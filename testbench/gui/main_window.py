@@ -1071,20 +1071,6 @@ class MainWindow(QMainWindow):
             # 10 Hz sensor loop.
             # ---------------------------------------------------------
 
-            elapsed_time_s = self.session.get_elapsed_time_s()
-            step_number = self.sequence.get_current_step_number()
-            step_label = "MANUAL" if step_number is None else f"STEP {int(step_number)}"
-            sensor_1_label = "--V" if sensor_1_voltage is None else f"{float(sensor_1_voltage):.2f}V"
-            sensor_2_label = "--V" if sensor_2_voltage is None else f"{float(sensor_2_voltage):.2f}V"
-            overlay_string = (
-                f"TIME: {float(elapsed_time_s):.1f}s | {step_label} | "
-                f"S1: {sensor_1_label} | S2: {sensor_2_label}"
-            )
-            if self.camera is not None:
-                self.camera.set_overlay_text(overlay_string)
-            if self.camera_2 is not None:
-                self.camera_2.set_overlay_text(overlay_string)
-
             # ---------------------------------------------------------
             # Store latest sensor measurements
             # ---------------------------------------------------------
@@ -1102,19 +1088,32 @@ class MainWindow(QMainWindow):
             # Simulation has no physical FG signal: keep values unknown.
             # ---------------------------------------------------------
 
-            main_rpm = (
-                self.main_fan_rpm_monitor.get_rpm()
-                if self.main_fan_rpm_monitor is not None
-                else None
-            )
-            smoke_rpm = (
-                self.smoke_fan_rpm_monitor.get_rpm()
-                if self.smoke_fan_rpm_monitor is not None
-                else None
-            )
+            main_rpm = self.session.main_fan_rpm
+            smoke_rpm = self.session.smoke_fan_rpm
+
+            if self.main_fan_rpm_monitor is not None:
+                main_rpm = self.main_fan_rpm_monitor.get_rpm()
+            if self.smoke_fan_rpm_monitor is not None:
+                smoke_rpm = self.smoke_fan_rpm_monitor.get_rpm()
 
             self.session.set_main_fan_rpm(main_rpm)
             self.session.set_smoke_fan_rpm(smoke_rpm)
+
+            elapsed_time_s = self.session.get_elapsed_time_s()
+            step_number = self.sequence.get_current_step_number()
+            step_str = "MANUAL" if step_number is None else f"STEP{int(step_number)}"
+            s1_str = "--V" if sensor_1_voltage is None else f"{float(sensor_1_voltage):.2f}V"
+            s2_str = "--V" if sensor_2_voltage is None else f"{float(sensor_2_voltage):.2f}V"
+            m_rpm_str = f"{int(main_rpm)}R" if main_rpm is not None else "--R"
+            s_rpm_str = f"{int(smoke_rpm)}R" if smoke_rpm is not None else "--R"
+            overlay_string = (
+                f"T:{float(elapsed_time_s):.1f}s | {step_str} | "
+                f"S1:{s1_str} | S2:{s2_str} | M:{m_rpm_str} | S:{s_rpm_str}"
+            )
+            if self.camera is not None:
+                self.camera.set_overlay_text(overlay_string)
+            if self.camera_2 is not None:
+                self.camera_2.set_overlay_text(overlay_string)
 
             # ---------------------------------------------------------
             # Time-series recording
@@ -1671,13 +1670,13 @@ class MainWindow(QMainWindow):
 
         if self.camera_2 is not None and self._camera_2_enabled and self._camera_2_record_video:
             try:
-                video_path = self.logger.get_video_path()
-                if video_path is None:
-                    video_path = self.logger.build_video_path()
-                    self.logger._video_path = video_path
+                video_path_2 = self.logger.get_video_2_path()
+                if video_path_2 is None:
+                    video_path_2 = self.logger.build_video_2_path()
+                    self.logger._video_2_path = video_path_2
 
-                if self.camera_2.start_recording(video_path):
-                    self.logger.log_event("video_recording_started_camera_2", video_path.name)
+                if self.camera_2.start_recording(video_path_2):
+                    self.logger.log_event("video_recording_started_camera_2", video_path_2.name)
                     self.logger.set_camera_available(True)
             except Exception:
                 try:
