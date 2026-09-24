@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from PySide6.QtWidgets import QApplication
 
@@ -123,6 +124,31 @@ class CameraLoggingTest(unittest.TestCase):
             self.assertGreaterEqual(len(rows), 2)
             self.assertIn("frame_index", rows[0])
             self.assertIn("1", rows[1])
+
+    @patch("hardware.camera.subprocess.run")
+    @patch("hardware.camera.subprocess.check_output")
+    def test_linux_v4l2_controls_are_used_for_exposure_and_gain(self, check_output_mock, run_mock):
+        check_output_mock.return_value = b"exposure_auto 3\nexposure_absolute 120\ngain 42\n"
+
+        with patch("hardware.camera.sys.platform", "linux"):
+            camera = CameraController(camera_index=0)
+
+            self.assertTrue(camera.supports_auto_exposure())
+            self.assertTrue(camera.supports_exposure())
+            self.assertTrue(camera.supports_gain())
+
+            self.assertTrue(camera.set_auto_exposure(True))
+            self.assertTrue(camera.set_exposure(120))
+            self.assertTrue(camera.set_gain(42))
+
+            self.assertTrue(camera.get_auto_exposure())
+            self.assertEqual(camera.get_exposure(), 120)
+            self.assertEqual(camera.get_gain(), 42)
+
+            self.assertEqual(run_mock.call_count, 3)
+            self.assertIn("exposure_auto=3", run_mock.call_args_list[0].args[0][-1])
+            self.assertIn("exposure_absolute=120", run_mock.call_args_list[1].args[0][-1])
+            self.assertIn("gain=42", run_mock.call_args_list[2].args[0][-1])
 
 
 if __name__ == "__main__":

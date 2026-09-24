@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import subprocess
 import sys
 import threading
 import time
@@ -78,7 +79,7 @@ class CameraController:
         - MainWindow must never write preview frames into the video writer.
     """
 
-    SUPPORTED_CAMERA_INDICES = (0,) if sys.platform.startswith("linux") else (0, 1, 2)
+    SUPPORTED_CAMERA_INDICES = (0, 2, 4, 6, 8) if sys.platform.startswith("linux") else (0, 1, 2, 3)
 
     def __init__(
         self,
@@ -407,13 +408,61 @@ class CameraController:
         except Exception:
             return False
 
+    def _read_v4l2_control(self, control_name: str) -> Optional[int]:
+        if not sys.platform.startswith("linux"):
+            return None
+
+        try:
+            output = subprocess.check_output(
+                [
+                    "v4l2-ctl",
+                    "-d",
+                    f"/dev/video{self.camera_index}",
+                    "-C",
+                    control_name,
+                ],
+                stderr=subprocess.DEVNULL,
+            )
+        except (FileNotFoundError, subprocess.CalledProcessError, OSError):
+            return None
+
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", errors="ignore")
+
+        for raw_line in output.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            pieces = line.split()
+            if not pieces:
+                continue
+
+            key = pieces[0].split("=", 1)[0]
+            value_text = pieces[0].split("=", 1)[1] if "=" in pieces[0] else (pieces[1] if len(pieces) > 1 else None)
+            if key != control_name or value_text is None:
+                continue
+
+            try:
+                return int(float(value_text))
+            except ValueError:
+                continue
+
+        return None
+
     def supports_auto_exposure(self) -> bool:
+        if sys.platform.startswith("linux"):
+            return True
         return self._property("CAP_PROP_AUTO_EXPOSURE") is not None
 
     def supports_exposure(self) -> bool:
+        if sys.platform.startswith("linux"):
+            return True
         return self._property("CAP_PROP_EXPOSURE") is not None
 
     def supports_gain(self) -> bool:
+        if sys.platform.startswith("linux"):
+            return True
         return self._property("CAP_PROP_GAIN") is not None
 
     @staticmethod
@@ -437,6 +486,11 @@ class CameraController:
         return bool(value)
 
     def get_auto_exposure(self) -> Optional[bool]:
+        if sys.platform.startswith("linux"):
+            value = self._read_v4l2_control("exposure_auto")
+            if value is not None:
+                return self._interpret_auto_exposure_value(float(value))
+
         value = self._property("CAP_PROP_AUTO_EXPOSURE")
         if value is None:
             return None
@@ -448,10 +502,28 @@ class CameraController:
 
         enabled = bool(enabled)
 
+        if sys.platform.startswith("linux"):
+            try:
+                subprocess.run(
+                    [
+                        "v4l2-ctl",
+                        "-d",
+                        f"/dev/video{self.camera_index}",
+                        "-c",
+                        f"exposure_auto={3 if enabled else 1}",
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+            except Exception:
+                return False
+
+            self._auto_exposure = self.get_auto_exposure()
+            return self._auto_exposure == enabled
+
         if sys.platform == "win32":
             candidates = (0.75, 1.0) if enabled else (0.25, 0.0)
-        elif sys.platform.startswith("linux"):
-            candidates = (3.0, 0.75) if enabled else (1.0, 0.25)
         else:
             candidates = (0.75, 1.0, 3.0) if enabled else (0.25, 0.0, 1.0)
 
@@ -473,6 +545,11 @@ class CameraController:
         return self._auto_exposure == enabled
 
     def get_exposure(self) -> Optional[int]:
+        if sys.platform.startswith("linux"):
+            value = self._read_v4l2_control("exposure_absolute")
+            if value is not None:
+                return value
+
         value = self._property("CAP_PROP_EXPOSURE")
         if value is None:
             return None
@@ -487,6 +564,26 @@ class CameraController:
         except Exception:
             return False
 
+        if sys.platform.startswith("linux"):
+            try:
+                subprocess.run(
+                    [
+                        "v4l2-ctl",
+                        "-d",
+                        f"/dev/video{self.camera_index}",
+                        "-c",
+                        f"exposure_absolute={target}",
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+            except Exception:
+                return False
+
+            self._exposure = self.get_exposure()
+            return self._exposure is not None
+
         if not self._set_property("CAP_PROP_EXPOSURE", float(target)):
             return False
 
@@ -496,6 +593,11 @@ class CameraController:
         return actual is not None
 
     def get_gain(self) -> Optional[int]:
+        if sys.platform.startswith("linux"):
+            value = self._read_v4l2_control("gain")
+            if value is not None:
+                return value
+
         value = self._property("CAP_PROP_GAIN")
         if value is None:
             return None
@@ -509,6 +611,26 @@ class CameraController:
             target = int(value)
         except Exception:
             return False
+
+        if sys.platform.startswith("linux"):
+            try:
+                subprocess.run(
+                    [
+                        "v4l2-ctl",
+                        "-d",
+                        f"/dev/video{self.camera_index}",
+                        "-c",
+                        f"gain={target}",
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+            except Exception:
+                return False
+
+            self._gain = self.get_gain()
+            return self._gain is not None
 
         if not self._set_property("CAP_PROP_GAIN", float(target)):
             return False
