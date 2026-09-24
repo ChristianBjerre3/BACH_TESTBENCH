@@ -134,39 +134,14 @@ class CameraController:
                 yield index
 
     def available_devices(self) -> list[tuple[int, str]]:
-        """Return only devices that OpenCV can actually open.
+        """Return the static camera candidates without a slow startup probe.
 
-        We intentionally do not add a fake placeholder such as "Camera 0" when
-        no real device is detected. The GUI should only show actual hardware
-        candidates that were verified by a real probe.
+        Hardware validation is intentionally deferred until the user attempts to
+        enable a camera. This avoids blocking the GUI during startup and keeps the
+        app responsive on Raspberry Pi.
         """
 
-        if cv2 is None:
-            return []
-
-        devices: list[tuple[int, str]] = []
-        for index in self.SUPPORTED_CAMERA_INDICES:
-            cap = None
-            try:
-                cap = self._open_capture(index)
-                if cap is None or not cap.isOpened():
-                    continue
-
-                ok, _ = cap.read()
-                if not ok:
-                    continue
-
-                devices.append((index, f"Camera {index}"))
-            except Exception:
-                pass
-            finally:
-                if cap is not None:
-                    try:
-                        cap.release()
-                    except Exception:
-                        pass
-
-        return devices
+        return [(idx, f"Camera {idx}") for idx in self.SUPPORTED_CAMERA_INDICES]
 
     def _open_capture(self, index: int):
         if cv2 is None:
@@ -195,11 +170,12 @@ class CameraController:
         if self.capture is None or cv2 is None:
             return
 
-        # These are requests, not guarantees. The driver is allowed to select
-        # the nearest supported mode.
+        # Force MJPG over USB before resolution setup to avoid the half-green-screen
+        # bandwidth starvation issue seen on some UVC webcams.
         with self._capture_lock:
-            self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-            self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+            self.capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+            self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, config.DEFAULT_CAMERA_RESOLUTION[0])
+            self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, config.DEFAULT_CAMERA_RESOLUTION[1])
             self.capture.set(cv2.CAP_PROP_FPS, float(self.target_fps))
 
     def open(self, camera_index: Optional[int] = None) -> bool:

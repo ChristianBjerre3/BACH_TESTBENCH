@@ -424,6 +424,8 @@ class MainWindow(QMainWindow):
         self._camera_2_enabled = False
         self._camera_2_record_video = False
 
+        self._update_camera_dropdowns()
+
         self.logger.set_camera_available(
             self.camera.is_available()
         )
@@ -439,6 +441,35 @@ class MainWindow(QMainWindow):
             self.camera.get_gain() if self.camera.supports_gain() else None,
             supported=self.camera.supports_gain(),
         )
+
+    def _update_camera_dropdowns(self) -> None:
+        """Synchronize the camera source dropdowns with the currently available devices."""
+
+        devices = self.camera.available_devices() if self.camera is not None else []
+
+        self.control_tab.camera_source_combo.blockSignals(True)
+        self.control_tab.camera_source_combo.clear()
+        for index, label in devices:
+            self.control_tab.camera_source_combo.addItem(label, index)
+        self.control_tab.camera_source_combo.setEnabled(bool(devices) and not self._camera_enabled)
+        self.control_tab.camera_source_combo.blockSignals(False)
+
+        excluded_index = None
+        if self.camera is not None and self._camera_enabled:
+            excluded_index = self.camera.camera_index
+
+        secondary_devices = devices
+        if excluded_index is not None:
+            secondary_devices = [
+                (index, label) for index, label in devices if index != excluded_index
+            ]
+
+        self.control_tab.camera_2_source_combo.blockSignals(True)
+        self.control_tab.camera_2_source_combo.clear()
+        for index, label in secondary_devices:
+            self.control_tab.camera_2_source_combo.addItem(label, index)
+        self.control_tab.camera_2_source_combo.setEnabled(bool(secondary_devices))
+        self.control_tab.camera_2_source_combo.blockSignals(False)
 
     def _build_ui(
         self,
@@ -1178,6 +1209,7 @@ class MainWindow(QMainWindow):
                 camera_gain=self.camera.get_gain() if self.camera.supports_gain() else None,
             )
             self._camera_error_logged = False
+            self._update_camera_dropdowns()
             return
 
         self._stop_camera_video()
@@ -1196,6 +1228,7 @@ class MainWindow(QMainWindow):
         self.control_tab.set_gain_value(None, supported=False)
         self.live_tab.set_camera_preview(None, False)
         self.live_tab.set_secondary_camera_preview(None, False)
+        self._update_camera_dropdowns()
 
     def _set_camera_2_enabled(
         self,
@@ -1233,6 +1266,7 @@ class MainWindow(QMainWindow):
                 supported=self.camera_2.supports_gain(),
             )
             self._update_secondary_camera_preview()
+            self._update_camera_dropdowns()
             return
 
         self.camera_2.close()
@@ -1242,6 +1276,7 @@ class MainWindow(QMainWindow):
         self.control_tab.set_camera_2_exposure_value(None, supported=False)
         self.control_tab.set_camera_2_gain_value(None, supported=False)
         self.live_tab.set_secondary_camera_preview(None, False)
+        self._update_camera_dropdowns()
 
     def _set_camera_source(
         self,
@@ -1369,13 +1404,7 @@ class MainWindow(QMainWindow):
                 return
 
             self.camera.set_auto_exposure(bool(enabled))
-            self.camera.refresh_camera_settings()
-
-            actual_auto = self.camera.get_auto_exposure()
-            self.control_tab.set_auto_exposure_enabled(
-                bool(actual_auto) if actual_auto is not None else False,
-                supported=True,
-            )
+            self.control_tab.set_auto_exposure_enabled(bool(enabled), supported=True)
             self.control_tab.set_exposure_value(
                 self.camera.get_exposure(),
                 supported=self.camera.supports_exposure(),
@@ -1385,7 +1414,7 @@ class MainWindow(QMainWindow):
                 supported=self.camera.supports_gain(),
             )
             self.logger.set_camera_metadata(
-                camera_auto_exposure=actual_auto,
+                camera_auto_exposure=bool(enabled),
                 camera_exposure=self.camera.get_exposure(),
                 camera_gain=self.camera.get_gain(),
             )
@@ -1435,12 +1464,7 @@ class MainWindow(QMainWindow):
                 return
 
             self.camera_2.set_auto_exposure(bool(enabled))
-            self.camera_2.refresh_camera_settings()
-            actual_auto = self.camera_2.get_auto_exposure()
-            self.control_tab.set_camera_2_auto_exposure_enabled(
-                bool(actual_auto) if actual_auto is not None else False,
-                supported=True,
-            )
+            self.control_tab.set_camera_2_auto_exposure_enabled(bool(enabled), supported=True)
             self.control_tab.set_camera_2_exposure_value(
                 self.camera_2.get_exposure(),
                 supported=self.camera_2.supports_exposure(),
@@ -1575,7 +1599,6 @@ class MainWindow(QMainWindow):
 
         if self.camera_2 is not None and self._camera_2_enabled:
             try:
-                self.camera_2.open(1)
                 self._update_secondary_camera_preview()
             except Exception:
                 self.live_tab.set_secondary_camera_preview(None, False)
