@@ -25,6 +25,27 @@ class UiRegressionTests(unittest.TestCase):
         self.assertAlmostEqual(y_min, 0.0)
         self.assertAlmostEqual(y_max, 2.6)
 
+    def test_live_tab_has_future_proof_camera_preview_slots(self):
+        app = QApplication.instance() or QApplication([])
+        tab = LiveTab()
+
+        self.assertTrue(hasattr(tab, "camera_preview_label"))
+        self.assertTrue(hasattr(tab, "camera_preview_label_2"))
+        self.assertTrue(hasattr(tab, "set_secondary_camera_preview"))
+        self.assertEqual(tab.camera_preview_label_2.text(), "CAMERA 2\nREADY")
+
+    def test_control_tab_has_camera_2_controls_like_camera_1(self):
+        app = QApplication.instance() or QApplication([])
+        tab = ControlTab()
+
+        self.assertTrue(hasattr(tab, "camera_2_button"))
+        self.assertTrue(hasattr(tab, "camera_2_source_combo"))
+        self.assertTrue(hasattr(tab, "camera_2_auto_exposure_checkbox"))
+        self.assertTrue(hasattr(tab, "camera_2_exposure_spin"))
+        self.assertTrue(hasattr(tab, "camera_2_gain_spin"))
+        self.assertTrue(hasattr(tab, "camera_2_record_video_checkbox"))
+        self.assertTrue(hasattr(tab, "camera_2_status_label"))
+
     def test_sequence_new_step_defaults_to_5_seconds_and_copies_previous_step(self):
         app = QApplication.instance() or QApplication([])
         tab = SequenceTab()

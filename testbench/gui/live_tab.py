@@ -396,38 +396,43 @@ class LiveTab(QWidget):
             420
         )
 
-        self.camera_preview_label = QLabel(
+        def _create_camera_preview_label(
+            text: str,
+        ) -> QLabel:
+            label = QLabel(text)
+            label.setAlignment(
+                Qt.AlignmentFlag.AlignCenter
+            )
+            label.setWordWrap(True)
+            label.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Expanding,
+            )
+            label.setMinimumHeight(
+                150
+            )
+            label.setMaximumHeight(
+                260
+            )
+            label.setStyleSheet(
+                """
+                QLabel {
+                    background-color: #0A1825;
+                    border: 1px solid #243A4D;
+                    border-radius: 8px;
+                    color: #7F91A3;
+                    margin: 0px;
+                    padding: 0px;
+                }
+                """
+            )
+            return label
+
+        self.camera_preview_label = _create_camera_preview_label(
             "CAMERA OFF"
         )
-
-        self.camera_preview_label.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
-        )
-
-        self.camera_preview_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Fixed,
-        )
-
-        self.camera_preview_label.setMinimumHeight(
-            160
-        )
-
-        self.camera_preview_label.setMaximumHeight(
-            260
-        )
-
-        self.camera_preview_label.setStyleSheet(
-            """
-            QLabel {
-                background-color: #0A1825;
-                border: 1px solid #243A4D;
-                border-radius: 8px;
-                color: #7F91A3;
-                margin: 0px;
-                padding: 0px;
-            }
-            """
+        self.camera_preview_label_2 = _create_camera_preview_label(
+            "CAMERA 2\nREADY"
         )
 
         # -------------------------------------------------------------
@@ -503,7 +508,20 @@ class LiveTab(QWidget):
             padding=0.0,
         )
 
-        layout.addWidget(
+        plot_container = QWidget()
+        plot_layout = QVBoxLayout(
+            plot_container
+        )
+        plot_layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
+        plot_layout.setSpacing(
+            8
+        )
+        plot_layout.addWidget(
             self.plot,
             stretch=1,
         )
@@ -524,11 +542,54 @@ class LiveTab(QWidget):
             pen=pg.mkPen(SENSOR_2_COLOR, width=PLOT_LINE_WIDTH),
             name="Smoke fan RPM", connect="finite",
         )
-        layout.addWidget(self.rpm_plot, stretch=0)
-
-        layout.addWidget(
-            self.camera_preview_label,
+        plot_layout.addWidget(
+            self.rpm_plot,
             stretch=0,
+        )
+
+        camera_column = QWidget()
+        camera_layout = QVBoxLayout(
+            camera_column
+        )
+        camera_layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
+        camera_layout.setSpacing(
+            8
+        )
+        camera_layout.addWidget(
+            self.camera_preview_label,
+            stretch=1,
+        )
+        camera_layout.addWidget(
+            self.camera_preview_label_2,
+            stretch=1,
+        )
+
+        content_layout = QHBoxLayout()
+        content_layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
+        content_layout.setSpacing(
+            CARD_SPACING
+        )
+        content_layout.addWidget(
+            plot_container,
+            stretch=3,
+        )
+        content_layout.addWidget(
+            camera_column,
+            stretch=1,
+        )
+
+        layout.addLayout(
+            content_layout
         )
 
         return card
@@ -1417,23 +1478,26 @@ class LiveTab(QWidget):
     # CLEAR PLOTS
     # =================================================================
 
-    def set_camera_preview(
+    def _apply_preview_to_label(
         self,
+        label: QLabel,
         frame,
         available: bool,
+        off_text: str,
+        unavailable_text: str,
     ) -> None:
-        """Display the current camera preview or a neutral placeholder without resizing layout."""
+        """Render a preview frame into a label without leaving any old API behind."""
 
         empty_pixmap = QPixmap()
 
         if frame is None:
-            self.camera_preview_label.setPixmap(empty_pixmap)
-            self.camera_preview_label.setText("CAMERA OFF")
+            label.setPixmap(empty_pixmap)
+            label.setText(off_text)
             return
 
         if not available:
-            self.camera_preview_label.setPixmap(empty_pixmap)
-            self.camera_preview_label.setText("CAMERA OFF")
+            label.setPixmap(empty_pixmap)
+            label.setText(off_text)
             return
 
         try:
@@ -1451,20 +1515,50 @@ class LiveTab(QWidget):
                 QImage.Format.Format_RGB888,
             )
             pixmap = QPixmap.fromImage(qimage)
-            target_size = self.camera_preview_label.size()
+            target_size = label.size()
             if target_size.width() <= 1 or target_size.height() <= 1:
-                target_size = self.camera_preview_label.sizeHint()
+                target_size = label.sizeHint()
 
             scaled = pixmap.scaled(
                 target_size,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
-            self.camera_preview_label.setPixmap(scaled)
-            self.camera_preview_label.setText("")
+            label.setPixmap(scaled)
+            label.setText("")
         except Exception:
-            self.camera_preview_label.setText("CAMERA NOT AVAILABLE")
-            self.camera_preview_label.setPixmap(empty_pixmap)
+            label.setText(unavailable_text)
+            label.setPixmap(empty_pixmap)
+
+    def set_camera_preview(
+        self,
+        frame,
+        available: bool,
+    ) -> None:
+        """Display the current camera preview or a neutral placeholder without resizing layout."""
+
+        self._apply_preview_to_label(
+            self.camera_preview_label,
+            frame,
+            available,
+            off_text="CAMERA OFF",
+            unavailable_text="CAMERA NOT AVAILABLE",
+        )
+
+    def set_secondary_camera_preview(
+        self,
+        frame,
+        available: bool,
+    ) -> None:
+        """Display the secondary camera preview while keeping the primary method untouched."""
+
+        self._apply_preview_to_label(
+            self.camera_preview_label_2,
+            frame,
+            available,
+            off_text="CAMERA 2\nOFF",
+            unavailable_text="CAMERA 2\nNOT AVAILABLE",
+        )
 
     def clear_plots(
         self,

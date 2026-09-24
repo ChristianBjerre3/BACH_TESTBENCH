@@ -41,8 +41,10 @@ MainWindow owns:
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from PySide6.QtCore import QTimer, Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QMainWindow,
     QTabWidget,
@@ -51,6 +53,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QVBoxLayout,
     QSplitter,
+    QLabel,
+    QFrame,
 )
 
 import config
@@ -401,6 +405,12 @@ class MainWindow(QMainWindow):
             self.logger.log_video_frame_timestamp
         )
 
+        self.camera_2 = CameraController(
+            camera_index=1,
+            preview_size=config.DEFAULT_CAMERA_PREVIEW_SIZE,
+            target_fps=config.DEFAULT_CAMERA_TARGET_FPS,
+        )
+
         self.control_tab.set_camera_source_options(
             self.camera.available_devices()
         )
@@ -494,9 +504,129 @@ class MainWindow(QMainWindow):
             "SEQUENCE",
         )
 
-        self.setCentralWidget(
-            self.tabs
+        central_widget = QWidget()
+        central_layout = QVBoxLayout(
+            central_widget
         )
+        central_layout.setContentsMargins(
+            12,
+            12,
+            12,
+            12,
+        )
+        central_layout.setSpacing(
+            10,
+        )
+        central_layout.addWidget(
+            self._build_brand_header(),
+            stretch=0,
+        )
+        central_layout.addWidget(
+            self.tabs,
+            stretch=1,
+        )
+
+        self.setCentralWidget(
+            central_widget
+        )
+
+    @staticmethod
+    def _build_brand_header() -> QWidget:
+        """Create a shared brand header for all tabs/pages."""
+
+        header = QFrame()
+        header.setProperty(
+            "card",
+            True,
+        )
+        header.setFixedHeight(
+            80
+        )
+
+        logo_layout = QHBoxLayout(
+            header
+        )
+        logo_layout.setContentsMargins(
+            18,
+            10,
+            18,
+            10,
+        )
+        logo_layout.setSpacing(
+            18,
+        )
+
+        pictures_dir = (
+            Path(__file__).resolve().parents[1]
+            / "pictures"
+        )
+        logo_files = [
+            "aarhus_university_logo.svg",
+            "Gemini_Generated_Image_u4ow2uu4ow2uu4ow (1).jpg",
+            "kisspng-logo-brand-product-design-font-file-agco-logo-svg-wikipedia-5b6e40587d57f6.8986170015339520885134.jpg",
+        ]
+
+        def _make_logo_label(path: Path) -> QLabel:
+            label = QLabel()
+            pixmap = QPixmap(str(path))
+            if not pixmap.isNull():
+                label.setPixmap(
+                    pixmap.scaled(
+                        140,
+                        42,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
+            else:
+                label.setText(path.stem)
+            label.setAlignment(
+                Qt.AlignmentFlag.AlignCenter
+            )
+            return label
+
+        left_logo_group = QHBoxLayout()
+        left_logo_group.setSpacing(12)
+        for file_name in logo_files[:1]:
+            left_logo_group.addWidget(
+                _make_logo_label(
+                    pictures_dir / file_name
+                )
+            )
+
+        right_logo_group = QHBoxLayout()
+        right_logo_group.setSpacing(12)
+        for file_name in logo_files[1:]:
+            right_logo_group.addWidget(
+                _make_logo_label(
+                    pictures_dir / file_name
+                )
+            )
+
+        title_label = QLabel(
+            config.APP_NAME.upper()
+        )
+        title_label.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+        title_label.setStyleSheet(
+            "QLabel { font-size: 18px; font-weight: 700; letter-spacing: 1.2px; }"
+        )
+
+        logo_layout.addLayout(
+            left_logo_group
+        )
+        logo_layout.addStretch()
+        logo_layout.addWidget(
+            title_label,
+            stretch=1,
+        )
+        logo_layout.addStretch()
+        logo_layout.addLayout(
+            right_logo_group
+        )
+
+        return header
 
     # =================================================================
     # TAB WRAPPER
@@ -698,24 +828,48 @@ class MainWindow(QMainWindow):
             self._set_camera_enabled
         )
 
+        self.control_tab.camera_2_enabled_changed.connect(
+            self._set_camera_2_enabled
+        )
+
         self.control_tab.camera_source_changed.connect(
             self._set_camera_source
+        )
+
+        self.control_tab.camera_2_source_changed.connect(
+            self._set_camera_2_source
         )
 
         self.control_tab.auto_exposure_changed.connect(
             self._set_camera_auto_exposure
         )
 
+        self.control_tab.camera_2_auto_exposure_changed.connect(
+            self._set_camera_2_auto_exposure
+        )
+
         self.control_tab.exposure_changed.connect(
             self._set_camera_exposure
+        )
+
+        self.control_tab.camera_2_exposure_changed.connect(
+            self._set_camera_2_exposure
         )
 
         self.control_tab.gain_changed.connect(
             self._set_camera_gain
         )
 
+        self.control_tab.camera_2_gain_changed.connect(
+            self._set_camera_2_gain
+        )
+
         self.control_tab.record_video_changed.connect(
             self._set_record_video
+        )
+
+        self.control_tab.camera_2_record_video_changed.connect(
+            self._set_camera_2_record_video
         )
 
         # -------------------------------------------------------------
@@ -985,10 +1139,16 @@ class MainWindow(QMainWindow):
             source_index = self.control_tab.get_camera_source_index()
             available = self.camera.open(source_index)
             self.logger.set_camera_available(available)
+            if self.camera_2 is not None:
+                try:
+                    self.camera_2.open(1)
+                except Exception:
+                    pass
             if not available:
                 self._camera_enabled = False
                 self.control_tab.set_camera_state(False, config.CAMERA_NOT_AVAILABLE_TEXT)
                 self.live_tab.set_camera_preview(None, False)
+                self.live_tab.set_secondary_camera_preview(None, False)
                 self._camera_preview_frame = None
                 self._camera_error_logged = False
                 return
@@ -1021,12 +1181,64 @@ class MainWindow(QMainWindow):
         self._camera_preview_frame = None
         self._camera_enabled = False
         self.camera.close()
+        if self.camera_2 is not None:
+            try:
+                self.camera_2.close()
+            except Exception:
+                pass
         self.logger.set_camera_available(False)
         self.control_tab.set_camera_state(False, config.CAMERA_OFF_TEXT)
         self.control_tab.set_auto_exposure_enabled(False, supported=False)
         self.control_tab.set_exposure_value(None, supported=False)
         self.control_tab.set_gain_value(None, supported=False)
         self.live_tab.set_camera_preview(None, False)
+        self.live_tab.set_secondary_camera_preview(None, False)
+
+    def _set_camera_2_enabled(
+        self,
+        enabled: bool,
+    ) -> None:
+        """Toggle the secondary camera on or off without impacting the primary camera."""
+
+        enabled = bool(enabled)
+        self._camera_2_enabled = enabled
+
+        if enabled:
+            source_index = self.control_tab.get_camera_2_source_index()
+            available = self.camera_2.open(source_index)
+            if not available:
+                self._camera_2_enabled = False
+                self.control_tab.set_camera_2_state(False, config.CAMERA_NOT_AVAILABLE_TEXT)
+                self.control_tab.set_camera_2_auto_exposure_enabled(False, supported=False)
+                self.control_tab.set_camera_2_exposure_value(None, supported=False)
+                self.control_tab.set_camera_2_gain_value(None, supported=False)
+                self.live_tab.set_secondary_camera_preview(None, False)
+                return
+
+            self.camera_2.refresh_camera_settings()
+            self.control_tab.set_camera_2_state(True, config.CAMERA_ON_TEXT)
+            self.control_tab.set_camera_2_auto_exposure_enabled(
+                self.camera_2.get_auto_exposure() if self.camera_2.supports_auto_exposure() else False,
+                supported=self.camera_2.supports_auto_exposure(),
+            )
+            self.control_tab.set_camera_2_exposure_value(
+                self.camera_2.get_exposure() if self.camera_2.supports_exposure() else None,
+                supported=self.camera_2.supports_exposure(),
+            )
+            self.control_tab.set_camera_2_gain_value(
+                self.camera_2.get_gain() if self.camera_2.supports_gain() else None,
+                supported=self.camera_2.supports_gain(),
+            )
+            self._update_secondary_camera_preview()
+            return
+
+        self.camera_2.close()
+        self._camera_2_enabled = False
+        self.control_tab.set_camera_2_state(False, config.CAMERA_OFF_TEXT)
+        self.control_tab.set_camera_2_auto_exposure_enabled(False, supported=False)
+        self.control_tab.set_camera_2_exposure_value(None, supported=False)
+        self.control_tab.set_camera_2_gain_value(None, supported=False)
+        self.live_tab.set_secondary_camera_preview(None, False)
 
     def _set_camera_source(
         self,
@@ -1089,6 +1301,54 @@ class MainWindow(QMainWindow):
             self.control_tab.set_gain_value(None, supported=False)
             self.live_tab.set_camera_preview(None, False)
             self.logger.set_camera_available(False)
+
+    def _set_camera_2_source(
+        self,
+        camera_index: int,
+    ) -> None:
+        """Select or switch the secondary camera source."""
+
+        try:
+            selected_index = int(camera_index)
+            if self.camera_2 is None:
+                return
+
+            if not self._camera_2_enabled:
+                self.camera_2.camera_index = selected_index
+                return
+
+            switched = self.camera_2.set_camera_index(selected_index)
+            if not switched:
+                self._camera_2_enabled = False
+                self.control_tab.set_camera_2_state(False, config.CAMERA_NOT_AVAILABLE_TEXT)
+                self.control_tab.set_camera_2_auto_exposure_enabled(False, supported=False)
+                self.control_tab.set_camera_2_exposure_value(None, supported=False)
+                self.control_tab.set_camera_2_gain_value(None, supported=False)
+                self.live_tab.set_secondary_camera_preview(None, False)
+                return
+
+            self.camera_2.refresh_camera_settings()
+            self.control_tab.set_camera_2_state(True, config.CAMERA_ON_TEXT)
+            self.control_tab.set_camera_2_auto_exposure_enabled(
+                self.camera_2.get_auto_exposure() or False,
+                supported=self.camera_2.supports_auto_exposure(),
+            )
+            self.control_tab.set_camera_2_exposure_value(
+                self.camera_2.get_exposure(),
+                supported=self.camera_2.supports_exposure(),
+            )
+            self.control_tab.set_camera_2_gain_value(
+                self.camera_2.get_gain(),
+                supported=self.camera_2.supports_gain(),
+            )
+            self._update_secondary_camera_preview()
+        except Exception:
+            self._camera_2_enabled = False
+            self.control_tab.set_camera_2_state(False, config.CAMERA_NOT_AVAILABLE_TEXT)
+            self.control_tab.set_camera_2_auto_exposure_enabled(False, supported=False)
+            self.control_tab.set_camera_2_exposure_value(None, supported=False)
+            self.control_tab.set_camera_2_gain_value(None, supported=False)
+            self.live_tab.set_secondary_camera_preview(None, False)
 
     def _set_camera_auto_exposure(
         self,
@@ -1156,6 +1416,60 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _set_camera_2_auto_exposure(
+        self,
+        enabled: bool,
+    ) -> None:
+        """Apply auto exposure for the secondary camera."""
+
+        if self.camera_2 is None or not self._camera_2_enabled:
+            return
+
+        try:
+            supported = self.camera_2.supports_auto_exposure()
+            if not supported:
+                self.control_tab.set_camera_2_auto_exposure_enabled(False, supported=False)
+                return
+
+            self.camera_2.set_auto_exposure(bool(enabled))
+            self.camera_2.refresh_camera_settings()
+            actual_auto = self.camera_2.get_auto_exposure()
+            self.control_tab.set_camera_2_auto_exposure_enabled(
+                bool(actual_auto) if actual_auto is not None else False,
+                supported=True,
+            )
+            self.control_tab.set_camera_2_exposure_value(
+                self.camera_2.get_exposure(),
+                supported=self.camera_2.supports_exposure(),
+            )
+            self.control_tab.set_camera_2_gain_value(
+                self.camera_2.get_gain(),
+                supported=self.camera_2.supports_gain(),
+            )
+        except Exception:
+            pass
+
+    def _set_camera_2_exposure(
+        self,
+        value: int,
+    ) -> None:
+        """Apply a manual exposure value to the secondary camera."""
+
+        if self.camera_2 is None or not self._camera_2_enabled:
+            return
+
+        try:
+            supported = self.camera_2.supports_exposure()
+            if not supported:
+                self.control_tab.set_camera_2_exposure_value(None, supported=False)
+                return
+
+            self.camera_2.set_exposure(int(value))
+            actual = self.camera_2.get_exposure()
+            self.control_tab.set_camera_2_exposure_value(actual, supported=True)
+        except Exception:
+            pass
+
     def _set_camera_gain(
         self,
         value: int,
@@ -1182,6 +1496,27 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _set_camera_2_gain(
+        self,
+        value: int,
+    ) -> None:
+        """Apply a manual gain value to the secondary camera."""
+
+        if self.camera_2 is None or not self._camera_2_enabled:
+            return
+
+        try:
+            supported = self.camera_2.supports_gain()
+            if not supported:
+                self.control_tab.set_camera_2_gain_value(None, supported=False)
+                return
+
+            self.camera_2.set_gain(int(value))
+            actual = self.camera_2.get_gain()
+            self.control_tab.set_camera_2_gain_value(actual, supported=True)
+        except Exception:
+            pass
+
     def _set_record_video(
         self,
         enabled: bool,
@@ -1190,29 +1525,62 @@ class MainWindow(QMainWindow):
 
         self._camera_record_video = bool(enabled)
 
+    def _set_camera_2_record_video(
+        self,
+        enabled: bool,
+    ) -> None:
+        """Set whether camera 2 should capture video during the next recording."""
+
+        self._camera_2_record_video = bool(enabled)
+
+    def _update_secondary_camera_preview(
+        self,
+    ) -> None:
+        """Optional second USB preview kept independent of the primary camera logic."""
+
+        if self.camera_2 is None:
+            self.live_tab.set_secondary_camera_preview(None, False)
+            return
+
+        try:
+            frame = self.camera_2.get_preview_frame()
+            available = self.camera_2.is_available()
+            self.live_tab.set_secondary_camera_preview(frame, available)
+        except Exception:
+            self.live_tab.set_secondary_camera_preview(None, False)
+
     def _update_camera_state(
         self,
     ) -> None:
         """Refresh preview/status only. Video writing is worker-owned."""
 
-        if not self._camera_enabled:
+        if self.camera is not None and self._camera_enabled:
+            try:
+                frame = self.camera.get_preview_frame()
+                available = self.camera.is_available()
+                self.logger.set_camera_available(available)
+                self._camera_preview_frame = frame
+                self.live_tab.set_camera_preview(frame, available)
+            except Exception:
+                self.logger.set_camera_available(False)
+                self.live_tab.set_camera_preview(None, False)
+                self._camera_enabled = False
+                self.control_tab.set_camera_state(False, config.CAMERA_NOT_AVAILABLE_TEXT)
+
+        elif self.camera is not None:
             self.live_tab.set_camera_preview(None, False)
-            return
 
-        if self.camera is None:
-            self.live_tab.set_camera_preview(None, False)
-            return
+        if self.camera_2 is not None and self._camera_2_enabled:
+            try:
+                self.camera_2.open(1)
+                self._update_secondary_camera_preview()
+            except Exception:
+                self.live_tab.set_secondary_camera_preview(None, False)
+        elif self.camera_2 is not None:
+            self.live_tab.set_secondary_camera_preview(None, False)
 
-        try:
-            frame = self.camera.get_preview_frame()
-            available = self.camera.is_available()
-            self.logger.set_camera_available(available)
-            self._camera_preview_frame = frame
-            self.live_tab.set_camera_preview(frame, available)
-
-            # Continuous video writing happens exclusively in CameraController's
-            # worker thread.  Never send the resized preview frame to VideoWriter.
-            if self._camera_recording_active:
+        if self.camera is not None and self._camera_enabled and self._camera_recording_active:
+            try:
                 recording_error = self.camera.get_recording_error()
                 if recording_error:
                     self._camera_recording_active = False
@@ -1222,55 +1590,58 @@ class MainWindow(QMainWindow):
                             {"video_recording": recording_error},
                         )
                         self._camera_error_logged = True
-
-        except Exception:
-            self.logger.set_camera_available(False)
-            self.live_tab.set_camera_preview(None, False)
-            self._camera_enabled = False
-            self.control_tab.set_camera_state(False, config.CAMERA_NOT_AVAILABLE_TEXT)
-            return
+            except Exception:
+                pass
 
     def _start_camera_video(
         self,
     ) -> None:
-        """Start writing a companion MP4 using the same base filename as the CSV recording."""
+        """Start writing companion MP4s for any active camera whose video flag is enabled."""
 
-        if not self._camera_enabled:
-            return
-
-        if not self._camera_record_video:
-            return
-
-        try:
-            if self.camera is None:
-                return
-
-            video_path = self.logger.get_video_path()
-            if video_path is None:
-                video_path = self.logger.build_video_path()
-                self.logger._video_path = video_path
-
-            if self.camera.start_recording(video_path):
-                self._camera_recording_active = True
-                self._camera_error_logged = False
-                self.logger.log_event("video_recording_started", video_path.name)
-                self.logger.set_camera_available(True)
-                self.logger.set_camera_metadata(
-                    camera_index=self.camera.camera_index,
-                    camera_auto_exposure=self.camera.get_auto_exposure(),
-                    camera_exposure=self.camera.get_exposure(),
-                    camera_gain=self.camera.get_gain(),
-                    video_recorded=True,
-                )
-            else:
-                self.logger.log_event("camera_error", "video_start_failed")
-                self._camera_recording_active = False
-        except Exception:
-            self._camera_recording_active = False
+        if self.camera is not None and self._camera_enabled and self._camera_record_video:
             try:
-                self.logger.log_event("camera_error", "video_start_failed")
+                video_path = self.logger.get_video_path()
+                if video_path is None:
+                    video_path = self.logger.build_video_path()
+                    self.logger._video_path = video_path
+
+                if self.camera.start_recording(video_path):
+                    self._camera_recording_active = True
+                    self._camera_error_logged = False
+                    self.logger.log_event("video_recording_started", video_path.name)
+                    self.logger.set_camera_available(True)
+                    self.logger.set_camera_metadata(
+                        camera_index=self.camera.camera_index,
+                        camera_auto_exposure=self.camera.get_auto_exposure(),
+                        camera_exposure=self.camera.get_exposure(),
+                        camera_gain=self.camera.get_gain(),
+                        video_recorded=True,
+                    )
+                else:
+                    self.logger.log_event("camera_error", "video_start_failed")
+                    self._camera_recording_active = False
             except Exception:
-                pass
+                self._camera_recording_active = False
+                try:
+                    self.logger.log_event("camera_error", "video_start_failed")
+                except Exception:
+                    pass
+
+        if self.camera_2 is not None and self._camera_2_enabled and self._camera_2_record_video:
+            try:
+                video_path = self.logger.get_video_path()
+                if video_path is None:
+                    video_path = self.logger.build_video_path()
+                    self.logger._video_path = video_path
+
+                if self.camera_2.start_recording(video_path):
+                    self.logger.log_event("video_recording_started_camera_2", video_path.name)
+                    self.logger.set_camera_available(True)
+            except Exception:
+                try:
+                    self.logger.log_event("camera_error", "video_start_failed_camera_2")
+                except Exception:
+                    pass
 
     def _stop_camera_video(
         self,

@@ -97,6 +97,13 @@ class ControlTab(QWidget):
     gain_changed = Signal(int)
     record_video_changed = Signal(bool)
 
+    camera_2_enabled_changed = Signal(bool)
+    camera_2_source_changed = Signal(int)
+    camera_2_auto_exposure_changed = Signal(bool)
+    camera_2_exposure_changed = Signal(int)
+    camera_2_gain_changed = Signal(int)
+    camera_2_record_video_changed = Signal(bool)
+
     stop_all_requested = Signal()
 
     # New display-only control.
@@ -114,6 +121,9 @@ class ControlTab(QWidget):
         self._camera_enabled = False
         self._record_video = False
 
+        self._camera_2_enabled = False
+        self._camera_2_record_video = False
+
         # Camera-property capability/state is kept explicitly.  Do not infer
         # support from a widget's current enabled state, because that can make
         # a temporarily disabled control stay disabled forever.
@@ -121,6 +131,11 @@ class ControlTab(QWidget):
         self._camera_exposure_supported = False
         self._camera_gain_supported = False
         self._camera_auto_exposure = True
+
+        self._camera_2_auto_exposure_supported = False
+        self._camera_2_exposure_supported = False
+        self._camera_2_gain_supported = False
+        self._camera_2_auto_exposure = True
 
         self._live_plot_enabled = True
 
@@ -1368,6 +1383,88 @@ class ControlTab(QWidget):
         status_row.addStretch()
         layout.addLayout(status_row)
 
+        layout.addSpacing(10)
+
+        camera_2_title = self._create_card_title("Camera 2")
+        layout.addWidget(camera_2_title)
+
+        camera_2_source_row = QHBoxLayout()
+        camera_2_source_row.setContentsMargins(0, 0, 0, 0)
+        camera_2_source_label = QLabel("Camera source")
+        set_label_role(camera_2_source_label, "fieldLabel")
+        self.camera_2_source_combo = QComboBox()
+        self.camera_2_source_combo.setMinimumWidth(170)
+        self.camera_2_source_combo.setEnabled(False)
+        camera_2_source_row.addWidget(camera_2_source_label)
+        camera_2_source_row.addWidget(self.camera_2_source_combo)
+        camera_2_source_row.addStretch()
+        layout.addLayout(camera_2_source_row)
+
+        camera_2_row = QHBoxLayout()
+        camera_2_row.setContentsMargins(0, 0, 0, 0)
+        camera_2_label = QLabel("Camera")
+        set_label_role(camera_2_label, "fieldLabel")
+        self.camera_2_button = QPushButton("OFF")
+        self.camera_2_button.setCheckable(True)
+        self.camera_2_button.setMinimumWidth(90)
+        set_role(self.camera_2_button, "toggle")
+        camera_2_row.addWidget(camera_2_label)
+        camera_2_row.addWidget(self.camera_2_button)
+        camera_2_row.addStretch()
+        layout.addLayout(camera_2_row)
+
+        camera_2_auto_exposure_row = QHBoxLayout()
+        camera_2_auto_exposure_row.setContentsMargins(0, 0, 0, 0)
+        camera_2_auto_exposure_label = QLabel("Auto exposure")
+        set_label_role(camera_2_auto_exposure_label, "fieldLabel")
+        self.camera_2_auto_exposure_checkbox = QCheckBox()
+        self.camera_2_auto_exposure_checkbox.setChecked(True)
+        camera_2_auto_exposure_row.addWidget(camera_2_auto_exposure_label)
+        camera_2_auto_exposure_row.addWidget(self.camera_2_auto_exposure_checkbox)
+        camera_2_auto_exposure_row.addStretch()
+        layout.addLayout(camera_2_auto_exposure_row)
+
+        camera_2_exposure_row = QHBoxLayout()
+        camera_2_exposure_row.setContentsMargins(0, 0, 0, 0)
+        camera_2_exposure_label = QLabel("Exposure")
+        set_label_role(camera_2_exposure_label, "fieldLabel")
+        self.camera_2_exposure_spin = QSpinBox()
+        self.camera_2_exposure_spin.setRange(-20, 10000)
+        self.camera_2_exposure_spin.setSingleStep(1)
+        self.camera_2_exposure_spin.setEnabled(False)
+        camera_2_exposure_row.addWidget(camera_2_exposure_label)
+        camera_2_exposure_row.addWidget(self.camera_2_exposure_spin)
+        camera_2_exposure_row.addStretch()
+        layout.addLayout(camera_2_exposure_row)
+
+        camera_2_gain_row = QHBoxLayout()
+        camera_2_gain_row.setContentsMargins(0, 0, 0, 0)
+        camera_2_gain_label = QLabel("Gain")
+        set_label_role(camera_2_gain_label, "fieldLabel")
+        self.camera_2_gain_spin = QSpinBox()
+        self.camera_2_gain_spin.setRange(0, 10000)
+        self.camera_2_gain_spin.setSingleStep(1)
+        self.camera_2_gain_spin.setEnabled(False)
+        camera_2_gain_row.addWidget(camera_2_gain_label)
+        camera_2_gain_row.addWidget(self.camera_2_gain_spin)
+        camera_2_gain_row.addStretch()
+        layout.addLayout(camera_2_gain_row)
+
+        self.camera_2_record_video_checkbox = QCheckBox("Record video")
+        self.camera_2_record_video_checkbox.setChecked(False)
+        layout.addWidget(self.camera_2_record_video_checkbox)
+
+        camera_2_status_row = QHBoxLayout()
+        camera_2_status_row.setContentsMargins(0, 0, 0, 0)
+        camera_2_status_label = QLabel("Status")
+        set_label_role(camera_2_status_label, "fieldLabel")
+        self.camera_2_status_label = QLabel(config.CAMERA_NOT_AVAILABLE_TEXT)
+        set_label_role(self.camera_2_status_label, "statusOff")
+        camera_2_status_row.addWidget(camera_2_status_label)
+        camera_2_status_row.addWidget(self.camera_2_status_label)
+        camera_2_status_row.addStretch()
+        layout.addLayout(camera_2_status_row)
+
         return card
 
     # =================================================================
@@ -1489,6 +1586,30 @@ class ControlTab(QWidget):
 
         self.record_video_checkbox.toggled.connect(
             self._on_record_video_toggled
+        )
+
+        self.camera_2_button.toggled.connect(
+            self._on_camera_2_toggled
+        )
+
+        self.camera_2_source_combo.currentIndexChanged.connect(
+            self._on_camera_2_source_changed
+        )
+
+        self.camera_2_auto_exposure_checkbox.toggled.connect(
+            self._on_camera_2_auto_exposure_toggled
+        )
+
+        self.camera_2_exposure_spin.valueChanged.connect(
+            self._on_camera_2_exposure_changed
+        )
+
+        self.camera_2_gain_spin.valueChanged.connect(
+            self._on_camera_2_gain_changed
+        )
+
+        self.camera_2_record_video_checkbox.toggled.connect(
+            self._on_camera_2_record_video_toggled
         )
 
         # Live plot
@@ -1658,6 +1779,22 @@ class ControlTab(QWidget):
             self._camera_enabled
         )
 
+    def _on_camera_2_toggled(
+        self,
+        enabled: bool,
+    ) -> None:
+        """Request camera 2 to be enabled or disabled."""
+
+        self._camera_2_enabled = bool(enabled)
+        self._set_toggle_button_text(
+            self.camera_2_button,
+            self._camera_2_enabled,
+        )
+        self.camera_2_button.setEnabled(True)
+        self.camera_2_enabled_changed.emit(
+            self._camera_2_enabled
+        )
+
     def _on_camera_source_changed(
         self,
         index: int,
@@ -1669,6 +1806,17 @@ class ControlTab(QWidget):
             return
         self.camera_source_changed.emit(int(source_index))
 
+    def _on_camera_2_source_changed(
+        self,
+        index: int,
+    ) -> None:
+        """Request the selected source for camera 2."""
+
+        source_index = self.camera_2_source_combo.itemData(index)
+        if source_index is None:
+            return
+        self.camera_2_source_changed.emit(int(source_index))
+
     def _on_auto_exposure_toggled(
         self,
         enabled: bool,
@@ -1679,6 +1827,16 @@ class ControlTab(QWidget):
         self._update_camera_control_state()
         self.auto_exposure_changed.emit(self._camera_auto_exposure)
 
+    def _on_camera_2_auto_exposure_toggled(
+        self,
+        enabled: bool,
+    ) -> None:
+        """Request automatic exposure to be enabled or disabled for camera 2."""
+
+        self._camera_2_auto_exposure = bool(enabled)
+        self._update_camera_control_state()
+        self.camera_2_auto_exposure_changed.emit(self._camera_2_auto_exposure)
+
     def _on_exposure_changed(
         self,
         value: int,
@@ -1687,6 +1845,15 @@ class ControlTab(QWidget):
 
         if self.exposure_spin.isEnabled():
             self.exposure_changed.emit(int(value))
+
+    def _on_camera_2_exposure_changed(
+        self,
+        value: int,
+    ) -> None:
+        """Request a fixed exposure value for camera 2."""
+
+        if self.camera_2_exposure_spin.isEnabled():
+            self.camera_2_exposure_changed.emit(int(value))
 
     def _on_gain_changed(
         self,
@@ -1697,6 +1864,15 @@ class ControlTab(QWidget):
         if self.gain_spin.isEnabled():
             self.gain_changed.emit(int(value))
 
+    def _on_camera_2_gain_changed(
+        self,
+        value: int,
+    ) -> None:
+        """Request a fixed gain value for camera 2."""
+
+        if self.camera_2_gain_spin.isEnabled():
+            self.camera_2_gain_changed.emit(int(value))
+
     def _on_record_video_toggled(
         self,
         enabled: bool,
@@ -1706,6 +1882,17 @@ class ControlTab(QWidget):
         self._record_video = bool(enabled)
         self.record_video_changed.emit(
             self._record_video
+        )
+
+    def _on_camera_2_record_video_toggled(
+        self,
+        enabled: bool,
+    ) -> None:
+        """Request video capture to be enabled for camera 2 while recording."""
+
+        self._camera_2_record_video = bool(enabled)
+        self.camera_2_record_video_changed.emit(
+            self._camera_2_record_video
         )
 
     def _on_live_plot_toggled(
@@ -1785,7 +1972,16 @@ class ControlTab(QWidget):
             config.CAMERA_NOT_AVAILABLE_TEXT,
         )
 
+        self.set_camera_2_state(
+            False,
+            config.CAMERA_NOT_AVAILABLE_TEXT,
+        )
+
         self.set_record_video_enabled(
+            False
+        )
+
+        self.set_camera_2_record_video_enabled(
             False
         )
 
@@ -2168,6 +2364,20 @@ class ControlTab(QWidget):
         self.camera_source_combo.setEnabled(True)
         self.camera_source_combo.blockSignals(False)
 
+        self.camera_2_source_combo.blockSignals(True)
+        self.camera_2_source_combo.clear()
+
+        if not available:
+            self.camera_2_source_combo.setEnabled(False)
+            self.camera_2_source_combo.blockSignals(False)
+            return
+
+        for index, label in available:
+            self.camera_2_source_combo.addItem(label, index)
+
+        self.camera_2_source_combo.setEnabled(True)
+        self.camera_2_source_combo.blockSignals(False)
+
     def get_camera_source_index(
         self,
     ) -> int:
@@ -2178,12 +2388,29 @@ class ControlTab(QWidget):
             return 0
         return int(data)
 
+    def get_camera_2_source_index(
+        self,
+    ) -> int:
+        """Return the currently selected source index for camera 2."""
+
+        data = self.camera_2_source_combo.currentData()
+        if data is None:
+            return 1
+        return int(data)
+
     def get_camera_enabled(
         self,
     ) -> bool:
         """Return whether the camera has been enabled by the user."""
 
         return self._camera_enabled
+
+    def get_camera_2_enabled(
+        self,
+    ) -> bool:
+        """Return whether camera 2 is enabled."""
+
+        return self._camera_2_enabled
 
     def set_auto_exposure_enabled(
         self,
@@ -2198,6 +2425,22 @@ class ControlTab(QWidget):
         self.auto_exposure_checkbox.blockSignals(True)
         self.auto_exposure_checkbox.setChecked(self._camera_auto_exposure)
         self.auto_exposure_checkbox.blockSignals(False)
+
+        self._update_camera_control_state()
+
+    def set_camera_2_auto_exposure_enabled(
+        self,
+        enabled: bool,
+        supported: bool = True,
+    ) -> None:
+        """Synchronize the camera-2 auto-exposure checkbox without emitting a signal."""
+
+        self._camera_2_auto_exposure_supported = bool(supported)
+        self._camera_2_auto_exposure = bool(enabled)
+
+        self.camera_2_auto_exposure_checkbox.blockSignals(True)
+        self.camera_2_auto_exposure_checkbox.setChecked(self._camera_2_auto_exposure)
+        self.camera_2_auto_exposure_checkbox.blockSignals(False)
 
         self._update_camera_control_state()
 
@@ -2219,6 +2462,24 @@ class ControlTab(QWidget):
 
         self._update_camera_control_state()
 
+    def set_camera_2_exposure_value(
+        self,
+        value: Optional[int],
+        supported: bool = True,
+    ) -> None:
+        """Synchronize the camera-2 exposure spin box."""
+
+        self._camera_2_exposure_supported = bool(supported)
+
+        self.camera_2_exposure_spin.blockSignals(True)
+        if value is None:
+            self.camera_2_exposure_spin.setValue(0)
+        else:
+            self.camera_2_exposure_spin.setValue(int(value))
+        self.camera_2_exposure_spin.blockSignals(False)
+
+        self._update_camera_control_state()
+
     def set_gain_value(
         self,
         value: Optional[int],
@@ -2237,11 +2498,30 @@ class ControlTab(QWidget):
 
         self._update_camera_control_state()
 
+    def set_camera_2_gain_value(
+        self,
+        value: Optional[int],
+        supported: bool = True,
+    ) -> None:
+        """Synchronize the camera-2 gain spin box."""
+
+        self._camera_2_gain_supported = bool(supported)
+
+        self.camera_2_gain_spin.blockSignals(True)
+        if value is None:
+            self.camera_2_gain_spin.setValue(0)
+        else:
+            self.camera_2_gain_spin.setValue(int(value))
+        self.camera_2_gain_spin.blockSignals(False)
+
+        self._update_camera_control_state()
+
     def _update_camera_control_state(self) -> None:
         """Apply camera-control enable/disable rules from explicit state."""
 
         locked = self._recording or self._sequence_running
         camera_ready = self._camera_enabled and not locked
+        camera_2_ready = self._camera_2_enabled and not locked
 
         self.camera_source_combo.setEnabled(not locked)
         self.camera_button.setEnabled(not locked)
@@ -2259,6 +2539,22 @@ class ControlTab(QWidget):
             manual_exposure and self._camera_gain_supported
         )
 
+        self.camera_2_source_combo.setEnabled(not locked)
+        self.camera_2_button.setEnabled(not locked)
+
+        self.camera_2_auto_exposure_checkbox.setEnabled(
+            camera_2_ready and self._camera_2_auto_exposure_supported
+        )
+
+        camera_2_manual_exposure = camera_2_ready and not self._camera_2_auto_exposure
+
+        self.camera_2_exposure_spin.setEnabled(
+            camera_2_manual_exposure and self._camera_2_exposure_supported
+        )
+        self.camera_2_gain_spin.setEnabled(
+            camera_2_manual_exposure and self._camera_2_gain_supported
+        )
+
     def set_record_video_enabled(
         self,
         enabled: bool,
@@ -2270,12 +2566,54 @@ class ControlTab(QWidget):
         self.record_video_checkbox.setChecked(self._record_video)
         self.record_video_checkbox.blockSignals(False)
 
+    def set_camera_2_record_video_enabled(
+        self,
+        enabled: bool,
+    ) -> None:
+        """Synchronize camera 2's Record video checkbox without emitting a signal."""
+
+        self._camera_2_record_video = bool(enabled)
+        self.camera_2_record_video_checkbox.blockSignals(True)
+        self.camera_2_record_video_checkbox.setChecked(self._camera_2_record_video)
+        self.camera_2_record_video_checkbox.blockSignals(False)
+
     def get_record_video_enabled(
         self,
     ) -> bool:
         """Return whether video capture is selected for the current run."""
 
         return self._record_video
+
+    def get_camera_2_record_video_enabled(
+        self,
+    ) -> bool:
+        """Return whether camera 2 video capture is selected."""
+
+        return self._camera_2_record_video
+
+    def set_camera_2_state(
+        self,
+        enabled: bool,
+        status_text: str = config.CAMERA_ON_TEXT,
+    ) -> None:
+        """Synchronize camera 2 controls and status text without emitting a signal."""
+
+        self._camera_2_enabled = bool(enabled)
+
+        self.camera_2_button.blockSignals(True)
+        self.camera_2_button.setChecked(self._camera_2_enabled)
+        self._set_toggle_button_text(self.camera_2_button, self._camera_2_enabled)
+        self.camera_2_button.blockSignals(False)
+
+        self.camera_2_status_label.setText(str(status_text).strip() or config.CAMERA_OFF_TEXT)
+
+        if self._camera_2_enabled:
+            set_label_role(self.camera_2_status_label, "statusOn")
+        else:
+            set_label_role(self.camera_2_status_label, "statusOff")
+
+        self.camera_2_button.setEnabled(True)
+        self._update_camera_control_state()
 
     # =================================================================
     # RECORDING STATE
