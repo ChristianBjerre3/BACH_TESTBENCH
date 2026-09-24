@@ -2148,6 +2148,9 @@ class MainWindow(QMainWindow):
             if self._recording_started_by_sequence:
                 return
 
+            if self._camera_recording_active:
+                self._stop_camera_video()
+
             self.logger.log_event(
                 "recording_stopped",
                 "manual",

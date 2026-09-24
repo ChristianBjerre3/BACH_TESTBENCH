@@ -329,7 +329,7 @@ class CameraController:
         if scale < 1.0:
             new_w = max(1, int(round(width * scale)))
             new_h = max(1, int(round(height * scale)))
-            return cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            return cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
 
         return frame.copy()
 
@@ -782,7 +782,7 @@ class CameraController:
                 # dimensions.  Normally the capture size is constant, but this
                 # guard prevents corrupt files if a driver changes mode.
                 if expected is not None and actual_size != expected:
-                    output = cv2.resize(frame, expected, interpolation=cv2.INTER_AREA)
+                    output = cv2.resize(frame, expected, interpolation=cv2.INTER_NEAREST)
 
                 if not output.flags["C_CONTIGUOUS"]:
                     output = output.copy()
