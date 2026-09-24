@@ -941,7 +941,7 @@ class MainWindow(QMainWindow):
     def _create_update_timer(
         self,
     ) -> None:
-        """Create central sensor/application timer."""
+        """Create the sensor loop and an independent camera preview timer."""
 
         interval_ms = max(
             1,
@@ -954,16 +954,18 @@ class MainWindow(QMainWindow):
         self.update_timer = QTimer(
             self
         )
-
         self.update_timer.setInterval(
             interval_ms
         )
-
         self.update_timer.timeout.connect(
             self._update_loop
         )
-
         self.update_timer.start()
+
+        self.camera_timer = QTimer(self)
+        self.camera_timer.setInterval(33)
+        self.camera_timer.timeout.connect(self._update_camera_state)
+        self.camera_timer.start()
 
     # =================================================================
     # CENTRAL UPDATE LOOP
@@ -1064,10 +1066,10 @@ class MainWindow(QMainWindow):
             )
 
             # ---------------------------------------------------------
-            # Camera preview / recording loop
+            # Camera preview / recording loop is handled by a dedicated
+            # camera timer so the UI can refresh at ~30 FPS independent of the
+            # 10 Hz sensor loop.
             # ---------------------------------------------------------
-
-            self._update_camera_state()
 
             # ---------------------------------------------------------
             # Store latest sensor measurements
@@ -3270,6 +3272,13 @@ class MainWindow(QMainWindow):
         ):
 
             self.update_timer.stop()
+
+        if hasattr(
+            self,
+            "camera_timer",
+        ):
+
+            self.camera_timer.stop()
 
         # -------------------------------------------------------------
         # Camera

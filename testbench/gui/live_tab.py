@@ -34,7 +34,7 @@ from typing import Optional
 
 import pyqtgraph as pg
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QWidget,
@@ -1515,14 +1515,12 @@ class LiveTab(QWidget):
                 QImage.Format.Format_RGB888,
             )
             pixmap = QPixmap.fromImage(qimage)
-            target_size = label.size()
-            if target_size.width() <= 1 or target_size.height() <= 1:
-                target_size = label.sizeHint()
+            target_size = QSize(480, 260)
 
             scaled = pixmap.scaled(
                 target_size,
                 Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
+                Qt.TransformationMode.FastTransformation,
             )
             label.setPixmap(scaled)
             label.setText("")
