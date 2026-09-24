@@ -109,6 +109,7 @@ class CameraController:
         self._recording_error: Optional[str] = None
         self._frames_written = 0
         self._video_frame_callback = None
+        self._overlay_text = ""
 
         self._auto_exposure: Optional[bool] = None
         self._exposure: Optional[int] = None
@@ -753,6 +754,10 @@ class CameraController:
         self._pending_recording_path = None
         return True
 
+    def set_overlay_text(self, text: str) -> None:
+        with self._frame_lock:
+            self._overlay_text = str(text)
+
     def _record_raw_frame(self, frame, timestamp_monotonic_ns: Optional[int] = None) -> None:
         """Write exactly one raw frame per worker capture cycle."""
 
@@ -781,6 +786,24 @@ class CameraController:
 
                 if not output.flags["C_CONTIGUOUS"]:
                     output = output.copy()
+
+                overlay_text = self._overlay_text.strip()
+                if overlay_text:
+                    frame_h, frame_w = output.shape[:2]
+                    bottom_margin = 36
+                    rect_y1 = max(0, frame_h - bottom_margin)
+                    rect_y2 = frame_h
+                    cv2.rectangle(output, (0, rect_y1), (frame_w, rect_y2), (0, 0, 0), thickness=-1)
+                    cv2.putText(
+                        output,
+                        overlay_text,
+                        (18, frame_h - 12),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55,
+                        (255, 255, 255),
+                        1,
+                        cv2.LINE_AA,
+                    )
 
                 writer.write(output)
                 self._frames_written += 1

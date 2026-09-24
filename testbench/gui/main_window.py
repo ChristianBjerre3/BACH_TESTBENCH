@@ -1071,6 +1071,20 @@ class MainWindow(QMainWindow):
             # 10 Hz sensor loop.
             # ---------------------------------------------------------
 
+            elapsed_time_s = self.session.get_elapsed_time_s()
+            step_number = self.sequence.get_current_step_number()
+            step_label = "MANUAL" if step_number is None else f"STEP {int(step_number)}"
+            sensor_1_label = "--V" if sensor_1_voltage is None else f"{float(sensor_1_voltage):.2f}V"
+            sensor_2_label = "--V" if sensor_2_voltage is None else f"{float(sensor_2_voltage):.2f}V"
+            overlay_string = (
+                f"TIME: {float(elapsed_time_s):.1f}s | {step_label} | "
+                f"S1: {sensor_1_label} | S2: {sensor_2_label}"
+            )
+            if self.camera is not None:
+                self.camera.set_overlay_text(overlay_string)
+            if self.camera_2 is not None:
+                self.camera_2.set_overlay_text(overlay_string)
+
             # ---------------------------------------------------------
             # Store latest sensor measurements
             # ---------------------------------------------------------

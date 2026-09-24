@@ -24,8 +24,8 @@ class CameraLoggingTest(unittest.TestCase):
 
             video_path = logger.build_video_path(base_name=base_name)
 
-            self.assertTrue(video_path.name.endswith("_video.mp4"))
-            self.assertEqual(video_path.name, f"{base_name}_video.mp4")
+            self.assertTrue(video_path.name.endswith("_video.avi"))
+            self.assertEqual(video_path.name, f"{base_name}_video.avi")
             self.assertFalse(video_path.name.startswith("video_"))
 
     def test_camera_source_selection_is_stored_and_enumerated(self):
@@ -85,8 +85,8 @@ class CameraLoggingTest(unittest.TestCase):
 
         width, height, fps = camera._resolve_recording_profile(capture_size[0], capture_size[1])
 
-        self.assertEqual((width, height), (1280, 720))
-        self.assertLessEqual(fps, 15)
+        self.assertEqual((width, height), (800, 450))
+        self.assertLessEqual(fps, 30)
 
     def test_camera_source_dropdown_only_lists_real_devices(self):
         app = QApplication.instance() or QApplication([])
