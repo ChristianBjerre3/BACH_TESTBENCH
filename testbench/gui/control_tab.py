@@ -1299,104 +1299,102 @@ class ControlTab(QWidget):
         """Create the Camera 1 controls as an independent card."""
 
         card = self._new_card()
+        layout = QGridLayout(card)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setHorizontalSpacing(10)
+        layout.setVerticalSpacing(8)
 
-        layout = QVBoxLayout(
-            card
-        )
+        title = self._create_card_title("Camera 1")
+        layout.addWidget(title, 0, 0, 1, 2)
 
-        layout.setContentsMargins(
-            16,
-            14,
-            16,
-            14,
-        )
-
-        layout.setSpacing(
-            8,
-        )
-
-        layout.addWidget(
-            self._create_card_title(
-                "Camera 1"
-            )
-        )
-
-        source_row = QHBoxLayout()
-        source_row.setContentsMargins(0, 0, 0, 0)
         source_label = QLabel("Camera source")
         set_label_role(source_label, "fieldLabel")
         self.camera_source_combo = QComboBox()
         self.camera_source_combo.setMinimumWidth(170)
         self.camera_source_combo.setEnabled(False)
-        source_row.addWidget(source_label)
-        source_row.addWidget(self.camera_source_combo)
-        source_row.addStretch()
-        layout.addLayout(source_row)
 
-        camera_row = QHBoxLayout()
-        camera_row.setContentsMargins(0, 0, 0, 0)
+        camera_source_widget = QWidget()
+        camera_source_layout = QHBoxLayout(camera_source_widget)
+        camera_source_layout.setContentsMargins(0, 0, 0, 0)
+        camera_source_layout.addWidget(source_label)
+        camera_source_layout.addWidget(self.camera_source_combo)
+        camera_source_layout.addStretch()
+        layout.addWidget(camera_source_widget, 1, 0)
+
         camera_label = QLabel("Camera")
         set_label_role(camera_label, "fieldLabel")
         self.camera_button = QPushButton("OFF")
         self.camera_button.setCheckable(True)
         self.camera_button.setMinimumWidth(90)
         set_role(self.camera_button, "toggle")
-        camera_row.addWidget(camera_label)
-        camera_row.addWidget(self.camera_button)
-        camera_row.addStretch()
-        layout.addLayout(camera_row)
 
-        auto_exposure_row = QHBoxLayout()
-        auto_exposure_row.setContentsMargins(0, 0, 0, 0)
+        camera_toggle_widget = QWidget()
+        camera_toggle_layout = QHBoxLayout(camera_toggle_widget)
+        camera_toggle_layout.setContentsMargins(0, 0, 0, 0)
+        camera_toggle_layout.addWidget(camera_label)
+        camera_toggle_layout.addWidget(self.camera_button)
+        camera_toggle_layout.addStretch()
+        layout.addWidget(camera_toggle_widget, 1, 1)
+
         auto_exposure_label = QLabel("Auto exposure")
         set_label_role(auto_exposure_label, "fieldLabel")
         self.auto_exposure_checkbox = QCheckBox()
         self.auto_exposure_checkbox.setChecked(True)
-        auto_exposure_row.addWidget(auto_exposure_label)
-        auto_exposure_row.addWidget(self.auto_exposure_checkbox)
-        auto_exposure_row.addStretch()
-        layout.addLayout(auto_exposure_row)
 
-        exposure_row = QHBoxLayout()
-        exposure_row.setContentsMargins(0, 0, 0, 0)
+        auto_exposure_widget = QWidget()
+        auto_exposure_layout = QHBoxLayout(auto_exposure_widget)
+        auto_exposure_layout.setContentsMargins(0, 0, 0, 0)
+        auto_exposure_layout.addWidget(auto_exposure_label)
+        auto_exposure_layout.addWidget(self.auto_exposure_checkbox)
+        auto_exposure_layout.addStretch()
+        layout.addWidget(auto_exposure_widget, 2, 0)
+
+        self.record_video_checkbox = QCheckBox("Record video")
+        self.record_video_checkbox.setChecked(False)
+        layout.addWidget(self.record_video_checkbox, 2, 1)
+
         exposure_label = QLabel("Exposure")
         set_label_role(exposure_label, "fieldLabel")
         self.exposure_spin = QSpinBox()
         self.exposure_spin.setRange(-20, 10000)
         self.exposure_spin.setSingleStep(1)
         self.exposure_spin.setEnabled(False)
-        exposure_row.addWidget(exposure_label)
-        exposure_row.addWidget(self.exposure_spin)
-        exposure_row.addStretch()
-        layout.addLayout(exposure_row)
 
-        gain_row = QHBoxLayout()
-        gain_row.setContentsMargins(0, 0, 0, 0)
+        exposure_widget = QWidget()
+        exposure_layout = QHBoxLayout(exposure_widget)
+        exposure_layout.setContentsMargins(0, 0, 0, 0)
+        exposure_layout.addWidget(exposure_label)
+        exposure_layout.addWidget(self.exposure_spin)
+        exposure_layout.addStretch()
+        layout.addWidget(exposure_widget, 3, 0)
+
         gain_label = QLabel("Gain")
         set_label_role(gain_label, "fieldLabel")
         self.gain_spin = QSpinBox()
         self.gain_spin.setRange(0, 10000)
         self.gain_spin.setSingleStep(1)
         self.gain_spin.setEnabled(False)
-        gain_row.addWidget(gain_label)
-        gain_row.addWidget(self.gain_spin)
-        gain_row.addStretch()
-        layout.addLayout(gain_row)
 
-        self.record_video_checkbox = QCheckBox("Record video")
-        self.record_video_checkbox.setChecked(False)
-        layout.addWidget(self.record_video_checkbox)
+        gain_widget = QWidget()
+        gain_layout = QHBoxLayout(gain_widget)
+        gain_layout.setContentsMargins(0, 0, 0, 0)
+        gain_layout.addWidget(gain_label)
+        gain_layout.addWidget(self.gain_spin)
+        gain_layout.addStretch()
+        layout.addWidget(gain_widget, 3, 1)
 
-        status_row = QHBoxLayout()
-        status_row.setContentsMargins(0, 0, 0, 0)
         status_label = QLabel("Status")
         set_label_role(status_label, "fieldLabel")
         self.camera_status_label = QLabel(config.CAMERA_NOT_AVAILABLE_TEXT)
         set_label_role(self.camera_status_label, "statusOff")
-        status_row.addWidget(status_label)
-        status_row.addWidget(self.camera_status_label)
-        status_row.addStretch()
-        layout.addLayout(status_row)
+
+        status_widget = QWidget()
+        status_layout = QHBoxLayout(status_widget)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.addWidget(status_label)
+        status_layout.addWidget(self.camera_status_label)
+        status_layout.addStretch()
+        layout.addWidget(status_widget, 4, 0, 1, 2)
 
         return card
 
@@ -1406,104 +1404,102 @@ class ControlTab(QWidget):
         """Create the Camera 2 controls as an independent card."""
 
         card = self._new_card()
+        layout = QGridLayout(card)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setHorizontalSpacing(10)
+        layout.setVerticalSpacing(8)
 
-        layout = QVBoxLayout(
-            card
-        )
+        title = self._create_card_title("Camera 2")
+        layout.addWidget(title, 0, 0, 1, 2)
 
-        layout.setContentsMargins(
-            16,
-            14,
-            16,
-            14,
-        )
-
-        layout.setSpacing(
-            8,
-        )
-
-        layout.addWidget(
-            self._create_card_title(
-                "Camera 2"
-            )
-        )
-
-        source_row = QHBoxLayout()
-        source_row.setContentsMargins(0, 0, 0, 0)
         source_label = QLabel("Camera source")
         set_label_role(source_label, "fieldLabel")
         self.camera_2_source_combo = QComboBox()
         self.camera_2_source_combo.setMinimumWidth(170)
         self.camera_2_source_combo.setEnabled(False)
-        source_row.addWidget(source_label)
-        source_row.addWidget(self.camera_2_source_combo)
-        source_row.addStretch()
-        layout.addLayout(source_row)
 
-        camera_row = QHBoxLayout()
-        camera_row.setContentsMargins(0, 0, 0, 0)
+        camera_source_widget = QWidget()
+        camera_source_layout = QHBoxLayout(camera_source_widget)
+        camera_source_layout.setContentsMargins(0, 0, 0, 0)
+        camera_source_layout.addWidget(source_label)
+        camera_source_layout.addWidget(self.camera_2_source_combo)
+        camera_source_layout.addStretch()
+        layout.addWidget(camera_source_widget, 1, 0)
+
         camera_label = QLabel("Camera")
         set_label_role(camera_label, "fieldLabel")
         self.camera_2_button = QPushButton("OFF")
         self.camera_2_button.setCheckable(True)
         self.camera_2_button.setMinimumWidth(90)
         set_role(self.camera_2_button, "toggle")
-        camera_row.addWidget(camera_label)
-        camera_row.addWidget(self.camera_2_button)
-        camera_row.addStretch()
-        layout.addLayout(camera_row)
 
-        auto_exposure_row = QHBoxLayout()
-        auto_exposure_row.setContentsMargins(0, 0, 0, 0)
+        camera_toggle_widget = QWidget()
+        camera_toggle_layout = QHBoxLayout(camera_toggle_widget)
+        camera_toggle_layout.setContentsMargins(0, 0, 0, 0)
+        camera_toggle_layout.addWidget(camera_label)
+        camera_toggle_layout.addWidget(self.camera_2_button)
+        camera_toggle_layout.addStretch()
+        layout.addWidget(camera_toggle_widget, 1, 1)
+
         auto_exposure_label = QLabel("Auto exposure")
         set_label_role(auto_exposure_label, "fieldLabel")
         self.camera_2_auto_exposure_checkbox = QCheckBox()
         self.camera_2_auto_exposure_checkbox.setChecked(True)
-        auto_exposure_row.addWidget(auto_exposure_label)
-        auto_exposure_row.addWidget(self.camera_2_auto_exposure_checkbox)
-        auto_exposure_row.addStretch()
-        layout.addLayout(auto_exposure_row)
 
-        exposure_row = QHBoxLayout()
-        exposure_row.setContentsMargins(0, 0, 0, 0)
+        auto_exposure_widget = QWidget()
+        auto_exposure_layout = QHBoxLayout(auto_exposure_widget)
+        auto_exposure_layout.setContentsMargins(0, 0, 0, 0)
+        auto_exposure_layout.addWidget(auto_exposure_label)
+        auto_exposure_layout.addWidget(self.camera_2_auto_exposure_checkbox)
+        auto_exposure_layout.addStretch()
+        layout.addWidget(auto_exposure_widget, 2, 0)
+
+        self.camera_2_record_video_checkbox = QCheckBox("Record video")
+        self.camera_2_record_video_checkbox.setChecked(False)
+        layout.addWidget(self.camera_2_record_video_checkbox, 2, 1)
+
         exposure_label = QLabel("Exposure")
         set_label_role(exposure_label, "fieldLabel")
         self.camera_2_exposure_spin = QSpinBox()
         self.camera_2_exposure_spin.setRange(-20, 10000)
         self.camera_2_exposure_spin.setSingleStep(1)
         self.camera_2_exposure_spin.setEnabled(False)
-        exposure_row.addWidget(exposure_label)
-        exposure_row.addWidget(self.camera_2_exposure_spin)
-        exposure_row.addStretch()
-        layout.addLayout(exposure_row)
 
-        gain_row = QHBoxLayout()
-        gain_row.setContentsMargins(0, 0, 0, 0)
+        exposure_widget = QWidget()
+        exposure_layout = QHBoxLayout(exposure_widget)
+        exposure_layout.setContentsMargins(0, 0, 0, 0)
+        exposure_layout.addWidget(exposure_label)
+        exposure_layout.addWidget(self.camera_2_exposure_spin)
+        exposure_layout.addStretch()
+        layout.addWidget(exposure_widget, 3, 0)
+
         gain_label = QLabel("Gain")
         set_label_role(gain_label, "fieldLabel")
         self.camera_2_gain_spin = QSpinBox()
         self.camera_2_gain_spin.setRange(0, 10000)
         self.camera_2_gain_spin.setSingleStep(1)
         self.camera_2_gain_spin.setEnabled(False)
-        gain_row.addWidget(gain_label)
-        gain_row.addWidget(self.camera_2_gain_spin)
-        gain_row.addStretch()
-        layout.addLayout(gain_row)
 
-        self.camera_2_record_video_checkbox = QCheckBox("Record video")
-        self.camera_2_record_video_checkbox.setChecked(False)
-        layout.addWidget(self.camera_2_record_video_checkbox)
+        gain_widget = QWidget()
+        gain_layout = QHBoxLayout(gain_widget)
+        gain_layout.setContentsMargins(0, 0, 0, 0)
+        gain_layout.addWidget(gain_label)
+        gain_layout.addWidget(self.camera_2_gain_spin)
+        gain_layout.addStretch()
+        layout.addWidget(gain_widget, 3, 1)
 
-        status_row = QHBoxLayout()
-        status_row.setContentsMargins(0, 0, 0, 0)
         status_label = QLabel("Status")
         set_label_role(status_label, "fieldLabel")
         self.camera_2_status_label = QLabel(config.CAMERA_NOT_AVAILABLE_TEXT)
         set_label_role(self.camera_2_status_label, "statusOff")
-        status_row.addWidget(status_label)
-        status_row.addWidget(self.camera_2_status_label)
-        status_row.addStretch()
-        layout.addLayout(status_row)
+
+        status_widget = QWidget()
+        status_layout = QHBoxLayout(status_widget)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.addWidget(status_label)
+        status_layout.addWidget(self.camera_2_status_label)
+        status_layout.addStretch()
+        layout.addWidget(status_widget, 4, 0, 1, 2)
 
         return card
 
