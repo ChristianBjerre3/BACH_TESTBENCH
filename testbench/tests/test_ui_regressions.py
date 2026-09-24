@@ -63,20 +63,26 @@ class UiRegressionTests(unittest.TestCase):
         self.assertTrue(hasattr(window, "_camera_2_record_video"))
         self.assertFalse(window._camera_2_record_video)
 
-    def test_camera_sections_are_split_into_two_sub_cards(self):
+    def test_camera_cards_are_split_into_two_independent_cards(self):
         app = QApplication.instance() or QApplication([])
         tab = ControlTab()
 
-        self.assertTrue(hasattr(tab, "camera_1_section"))
-        self.assertTrue(hasattr(tab, "camera_2_section"))
-        self.assertIsNotNone(tab.camera_1_section)
-        self.assertIsNotNone(tab.camera_2_section)
+        self.assertTrue(hasattr(tab, "camera_1_card"))
+        self.assertTrue(hasattr(tab, "camera_2_card"))
+        self.assertIsNotNone(tab.camera_1_card)
+        self.assertIsNotNone(tab.camera_2_card)
 
-        sections_layout = tab.camera_card.layout().itemAt(1).layout()
-        self.assertEqual(sections_layout.count(), 2)
-        self.assertIsNotNone(sections_layout.itemAt(0).widget())
-        self.assertIsNotNone(sections_layout.itemAt(1).widget())
-        self.assertNotEqual(sections_layout.itemAt(0).widget(), sections_layout.itemAt(1).widget())
+        self.assertIsNotNone(tab.camera_1_card)
+        self.assertIsNotNone(tab.camera_2_card)
+
+        dashboard_layout = tab.layout().itemAt(1).layout()
+        row_3_col_0 = dashboard_layout.itemAtPosition(3, 0)
+        row_3_col_1 = dashboard_layout.itemAtPosition(3, 1)
+
+        self.assertIsNotNone(row_3_col_0)
+        self.assertIsNotNone(row_3_col_1)
+        self.assertEqual(row_3_col_0.widget(), tab.camera_1_card)
+        self.assertEqual(row_3_col_1.widget(), tab.camera_2_card)
 
     def test_sequence_new_step_defaults_to_5_seconds_and_copies_previous_step(self):
         app = QApplication.instance() or QApplication([])
