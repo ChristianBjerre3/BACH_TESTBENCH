@@ -63,6 +63,21 @@ class UiRegressionTests(unittest.TestCase):
         self.assertTrue(hasattr(window, "_camera_2_record_video"))
         self.assertFalse(window._camera_2_record_video)
 
+    def test_camera_sections_are_split_into_two_sub_cards(self):
+        app = QApplication.instance() or QApplication([])
+        tab = ControlTab()
+
+        self.assertTrue(hasattr(tab, "camera_1_section"))
+        self.assertTrue(hasattr(tab, "camera_2_section"))
+        self.assertIsNotNone(tab.camera_1_section)
+        self.assertIsNotNone(tab.camera_2_section)
+
+        sections_layout = tab.camera_card.layout().itemAt(1).layout()
+        self.assertEqual(sections_layout.count(), 2)
+        self.assertIsNotNone(sections_layout.itemAt(0).widget())
+        self.assertIsNotNone(sections_layout.itemAt(1).widget())
+        self.assertNotEqual(sections_layout.itemAt(0).widget(), sections_layout.itemAt(1).widget())
+
     def test_sequence_new_step_defaults_to_5_seconds_and_copies_previous_step(self):
         app = QApplication.instance() or QApplication([])
         tab = SequenceTab()
