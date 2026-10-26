@@ -53,7 +53,7 @@ SMOKE_FAN_PWM_GPIO = 19
 # Reserved for future RPM measurement.
 # Not implemented in the current software.
 MAIN_FAN_FG_GPIO = 17
-SMOKE_FAN_FG_GPIO = 27
+SMOKE_FAN_FG_GPIO = 22
 
 
 # ============================================================

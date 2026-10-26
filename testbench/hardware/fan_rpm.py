@@ -9,7 +9,7 @@ Hardware:
 
 Connections:
     Fan 1 FG -> GPIO17
-    Fan 2 FG -> GPIO27
+    Fan 2 FG -> GPIO22
 
 The FG outputs are open-collector signals.
 
